@@ -147,7 +147,7 @@ def main():
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        torch_dtype=torch.bfloat16,
+        dtype=torch.bfloat16,  # CPU 原生 bfloat16
         device_map="cpu",
         trust_remote_code=True,
         low_cpu_mem_usage=True,
@@ -217,9 +217,11 @@ def main():
         learning_rate=LEARNING_RATE,
         warmup_ratio=WARMUP_RATIO,
         logging_steps=LOGGING_STEPS,
-        save_strategy="epoch",
-        save_total_limit=2,
-        bf16=True,           # CPU bfloat16
+        save_strategy="steps",
+        save_steps=50,
+        save_total_limit=3,
+        use_cpu=True,        # 显式声明 CPU 训练
+        bf16=False,          # 模型已在 bfloat16，不需要 AMP
         fp16=False,
         optim="adamw_torch",
         lr_scheduler_type="cosine",
@@ -242,7 +244,13 @@ def main():
     )
 
     t_start = time.time()
-    train_result = trainer.train()
+    # 支持从最近 checkpoint 恢复：如果有 checkpoint 就接着跑
+    resume_ckpt = None
+    ckpts = sorted(Path(OUTPUT_DIR).glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+    if ckpts:
+        resume_ckpt = str(ckpts[-1])
+        print(f"  从 checkpoint 恢复: {resume_ckpt}")
+    train_result = trainer.train(resume_from_checkpoint=resume_ckpt)
     train_time = time.time() - t_start
 
     print(f"\n训练完成!")
