@@ -3,6 +3,7 @@ data/raw/
 data/processed/
 !data/processed/classics/
 !data/processed/p0_baseline_report.json
+!data/processed/sft_train_p1.jsonl
 
 # ChromaDB 持久化（可重建）
 data/chroma/
