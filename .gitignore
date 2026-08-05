@@ -27,6 +27,10 @@ __pycache__/
 .venv/
 venv/
 .env
+.pytest_cache/
+*.egg-info/
+dist/
+build/
 
 # IDE
 .vscode/

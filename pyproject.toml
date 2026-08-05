@@ -1,7 +1,7 @@
 [project]
 name = "tcm-assistant"
-version = "0.1.0"
-description = "中医经典知识检索与理解助手"
+version = "0.2.0"
+description = "中医经典知识检索与理解助手 — LoRA 微调 + GraphRAG"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24",
@@ -10,8 +10,43 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rag = [
+    "chromadb>=0.5",
+    "sentence-transformers>=2.7",
+    "sse-starlette>=2.1",
+]
+train = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "peft>=0.11",
+    "datasets>=2.19",
+    "accelerate>=0.30",
+]
+serve = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+]
 dev = [
     "pytest>=8.0",
+    "psutil>=5.9",
+]
+all = [
+    "pymupdf>=1.24",
+    "networkx>=3.0",
+    "pandas>=2.0",
+    "chromadb>=0.5",
+    "sentence-transformers>=2.7",
+    "torch>=2.2",
+    "transformers>=4.40",
+    "peft>=0.11",
+    "datasets>=2.19",
+    "accelerate>=0.30",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    "pytest>=8.0",
+    "psutil>=5.9",
 ]
 
 [tool.pytest.ini_options]
