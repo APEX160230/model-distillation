@@ -4,6 +4,8 @@ data/processed/
 !data/processed/classics/
 !data/processed/p0_baseline_report.json
 !data/processed/sft_train_p1.jsonl
+!data/processed/p1_lora_report.json
+!data/processed/p0_vs_p1_comparison.json
 
 # ChromaDB 持久化（可重建）
 data/chroma/
@@ -15,6 +17,9 @@ data/chroma/
 models/
 *.gguf
 outputs/
+output_lora/
+output_merged/
+llama.cpp/
 
 # Python
 __pycache__/
