@@ -33,9 +33,10 @@ class RAGPipeline:
         chroma_path: str = "data/chroma",
         model: str = "qwen2.5:1.5b",
         top_k: int = 5,
+        generator=None,
     ) -> None:
         self._retriever = VectorRetriever(persist_dir=chroma_path)
-        self._generator = Generator(model=model)
+        self._generator = generator or Generator(model=model)
         self._top_k = top_k
 
     def retrieve(self, question: str) -> list[RetrievalResult]:
