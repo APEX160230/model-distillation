@@ -18,7 +18,9 @@ PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
+import torch
 from src.rag.pipeline import RAGPipeline
 from src.rag.local_generate import LocalGenerator
 from src.eval.runner import EvalRunner
@@ -110,7 +112,7 @@ def main():
     generator = LocalGenerator(
         model_path=str(merged_dir),
         device="cpu",
-        dtype=torch.bfloat16 if (torch := __import__("torch")).cpu.is_available() else torch.float32,
+        dtype=torch.bfloat16,
     )
 
     # 2. 创建 RAG Pipeline

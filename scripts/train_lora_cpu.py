@@ -31,7 +31,9 @@ from peft import LoraConfig, get_peft_model, TaskType
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
+# 优先使用本地模型，避免网络下载
+_LOCAL_MODEL = Path("models/qwen25-15b-base")
+MODEL_NAME = str(_LOCAL_MODEL) if _LOCAL_MODEL.exists() else "Qwen/Qwen2.5-1.5B-Instruct"
 DATA_PATH = "data/processed/sft_train_p1.jsonl"
 OUTPUT_DIR = "./output_lora"
 MERGED_DIR = "./output_merged"
