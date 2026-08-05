@@ -1,0 +1,31 @@
+# 原始数据
+data/raw/
+data/processed/
+!data/processed/classics/
+!data/processed/p0_baseline_report.json
+
+# ChromaDB 持久化（可重建）
+data/chroma/
+
+# WorkBuddy 内部
+.workbuddy/
+
+# 模型权重
+models/
+*.gguf
+outputs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

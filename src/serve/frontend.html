@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>中医经典知识检索与理解助手</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: #2c3e50;
+            color: white;
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        header h1 { font-size: 18px; font-weight: 500; }
+        header .status { font-size: 13px; opacity: 0.8; }
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            max-width: 800px;
+            width: 100%;
+            margin: 0 auto;
+        }
+        .message {
+            margin-bottom: 16px;
+            max-width: 80%;
+        }
+        .message.user {
+            margin-left: auto;
+        }
+        .message .bubble {
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .message.user .bubble {
+            background: #2c3e50;
+            color: white;
+        }
+        .message.assistant .bubble {
+            background: white;
+            border: 1px solid #e0e0e0;
+        }
+        .retrieved-section {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+        .retrieved-section summary {
+            cursor: pointer;
+            user-select: none;
+        }
+        .retrieved-section .doc-item {
+            margin: 4px 0;
+            padding: 6px 10px;
+            background: #f9f9f9;
+            border-radius: 6px;
+            border-left: 3px solid #3498db;
+        }
+        .retrieved-section .doc-id { color: #3498db; font-weight: 500; }
+        #input-container {
+            padding: 16px 20px;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+        }
+        #input-form {
+            display: flex;
+            gap: 10px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        #question-input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+        #question-input:focus { border-color: #3498db; }
+        #submit-btn {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        #submit-btn:hover { background: #2980b9; }
+        #submit-btn:disabled { background: #bdc3c7; cursor: not-allowed; }
+        .typing-indicator {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: #999;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>🌿 中医经典知识检索与理解助手</h1>
+        <span class="status" id="status">连接中...</span>
+    </header>
+    <div id="chat-container">
+        <div class="message assistant">
+            <div class="bubble">你好！我可以帮你检索和理解《伤寒论》的经典原文。试着问我"桂枝汤的组成是什么？"或"什么是太阳病？"</div>
+        </div>
+    </div>
+    <div id="input-container">
+        <form id="input-form">
+            <input type="text" id="question-input" placeholder="输入你的问题..." autocomplete="off" autofocus>
+            <button type="submit" id="submit-btn">发送</button>
+        </form>
+    </div>
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const inputForm = document.getElementById('input-form');
+        const questionInput = document.getElementById('question-input');
+        const submitBtn = document.getElementById('submit-btn');
+        const statusEl = document.getElementById('status');
+
+        // 健康检查
+        fetch('/api/health').then(r => r.json()).then(data => {
+            statusEl.textContent = `向量库: ${data.vector_store_count} 条 | 模型: ${data.model}`;
+        }).catch(() => {
+            statusEl.textContent = '连接失败';
+        });
+
+        inputForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            // 显示用户消息
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.innerHTML = `<div class="bubble">${escapeHtml(question)}</div>`;
+            chatContainer.appendChild(userMsg);
+
+            questionInput.value = '';
+            submitBtn.disabled = true;
+
+            // 创建助手消息容器
+            const assistantMsg = document.createElement('div');
+            assistantMsg.className = 'message assistant';
+            const bubble = document.createElement('div');
+            bubble.className = 'bubble';
+            bubble.innerHTML = '<span class="typing-indicator"></span> 检索中...';
+            assistantMsg.appendChild(bubble);
+            chatContainer.appendChild(assistantMsg);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            // SSE 请求
+            const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ question }),
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let answerText = '';
+            let retrievedSection = null;
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const data = JSON.parse(line.slice(6));
+
+                    if (data.type === 'retrieved') {
+                        retrievedSection = document.createElement('details');
+                        retrievedSection.className = 'retrieved-section';
+                        const summary = document.createElement('summary');
+                        summary.textContent = `检索到 ${data.docs.length} 条相关原文`;
+                        retrievedSection.appendChild(summary);
+                        for (const doc of data.docs) {
+                            const item = document.createElement('div');
+                            item.className = 'doc-item';
+                            item.innerHTML = `<span class="doc-id">第${doc.clause_id}条</span> · ${doc.chapter} · score=${doc.score}<br>${escapeHtml(doc.text.substring(0, 80))}...`;
+                            retrievedSection.appendChild(item);
+                        }
+                        bubble.innerHTML = '<span class="typing-indicator"></span> 生成中...';
+                    } else if (data.type === 'chunk') {
+                        answerText += data.content;
+                        bubble.textContent = answerText;
+                    } else if (data.type === 'done') {
+                        bubble.textContent = answerText || '（无回答）';
+                        if (retrievedSection) {
+                            assistantMsg.appendChild(retrievedSection);
+                        }
+                    }
+                }
+            }
+
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            submitBtn.disabled = false;
+            questionInput.focus();
+        });
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

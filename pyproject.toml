@@ -1,0 +1,26 @@
+[project]
+name = "tcm-assistant"
+version = "0.1.0"
+description = "中医经典知识检索与理解助手"
+requires-python = ">=3.11"
+dependencies = [
+    "pymupdf>=1.24",
+    "networkx>=3.0",
+    "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
