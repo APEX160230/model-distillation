@@ -1,0 +1,261 @@
+"""概念映射器 — 现代中医概念到经典条文的精确映射
+
+解决 semantic route 的核心问题：现代汉语概念查询（如"什么是阳明病"）
+与文言文条文之间的语义鸿沟。
+
+映射策略：
+1. 六经病 → 提纲条文 + 代表方剂条文
+2. 证候 → 定义条文 + 主治方剂条文
+3. 概念 → 相关关键词扩展（用于 BM25 fallback）
+
+数据来源：伤寒论原文（公版）+ 中医教材标准分类。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class ConceptMapping:
+    """概念映射结果"""
+    concept: str
+    # 定义条文（"X之为病" 提纲条文）
+    defining_clauses: list[int] = field(default_factory=list)
+    # 代表方剂条文（"X汤主之" 治疗条文）
+    treatment_clauses: list[int] = field(default_factory=list)
+    # 相关方剂名（用于 BM25 查询扩展）
+    related_formulas: list[str] = field(default_factory=list)
+    # 相关关键词（文言文，用于 BM25 查询扩展）
+    expansion_keywords: list[str] = field(default_factory=list)
+    # 概念简述（用于增强 generation prompt）
+    brief: str = ""
+
+    @property
+    def all_clauses(self) -> list[int]:
+        """所有相关条文（去重保序）"""
+        seen: set[int] = set()
+        result: list[int] = []
+        for cid in self.defining_clauses + self.treatment_clauses:
+            if cid not in seen:
+                result.append(cid)
+                seen.add(cid)
+        return result
+
+
+# ── 概念映射表 ──────────────────────────────────────────────
+# 数据来源：伤寒论原文 + 中医教材标准分类
+
+CONCEPT_MAP: dict[str, ConceptMapping] = {
+    # ── 六经病 ──
+    "太阳病": ConceptMapping(
+        concept="太阳病",
+        defining_clauses=[1],
+        treatment_clauses=[12, 35],
+        related_formulas=["桂枝汤", "麻黄汤"],
+        expansion_keywords=["太阳", "脉浮", "头项强痛", "恶寒"],
+        brief="太阳病为外感病初期，主表证，以脉浮、头项强痛、恶寒为提纲。",
+    ),
+    "阳明病": ConceptMapping(
+        concept="阳明病",
+        defining_clauses=[195],
+        treatment_clauses=[223, 208],
+        related_formulas=["白虎汤", "大承气汤", "小承气汤", "调胃承气汤"],
+        expansion_keywords=["阳明", "胃家实", "大热", "大汗", "大渴", "潮热"],
+        brief="阳明病为外感病阳热亢盛阶段，分经证（白虎汤）和腑证（承气汤）。",
+    ),
+    "少阳病": ConceptMapping(
+        concept="少阳病",
+        defining_clauses=[277],
+        treatment_clauses=[96],
+        related_formulas=["小柴胡汤"],
+        expansion_keywords=["少阳", "口苦", "咽干", "目眩", "往来寒热", "胸胁苦满"],
+        brief="少阳病为邪犯少阳胆经，枢机不利，以口苦咽干目眩为提纲，小柴胡汤主之。",
+    ),
+    "太阴病": ConceptMapping(
+        concept="太阴病",
+        defining_clauses=[287],
+        treatment_clauses=[386],
+        related_formulas=["理中丸", "四逆汤"],
+        expansion_keywords=["太阴", "腹满", "吐", "食不下", "自利", "时腹自痛"],
+        brief="太阴病为脾阳虚衰、寒湿内盛，以腹满而吐、食不下、自利为提纲。",
+    ),
+    "少阴病": ConceptMapping(
+        concept="少阴病",
+        defining_clauses=[295],
+        treatment_clauses=[29, 317],
+        related_formulas=["四逆汤", "通脉四逆汤", "真武汤", "黄连阿胶汤"],
+        expansion_keywords=["少阴", "脉微细", "但欲寐", "下利清谷"],
+        brief="少阴病为心肾阳衰或阴虚火旺，以脉微细、但欲寐为提纲，分寒化证和热化证。",
+    ),
+    "厥阴病": ConceptMapping(
+        concept="厥阴病",
+        defining_clauses=[],  # 伤寒论中厥阴篇无"之为病"提纲条文
+        treatment_clauses=[338],
+        related_formulas=["乌梅丸", "当归四逆汤"],
+        expansion_keywords=["厥阴", "消渴", "气上撞心", "心中疼热", "饥而不欲食", "吐蛔"],
+        brief="厥阴病为邪入厥阴、寒热错杂阶段，以消渴、气上撞心、心中疼热为特征，乌梅丸主之。",
+    ),
+
+    # ── 证候 ──
+    "太阳中风证": ConceptMapping(
+        concept="太阳中风证",
+        defining_clauses=[12],
+        treatment_clauses=[12],
+        related_formulas=["桂枝汤"],
+        expansion_keywords=["太阳中风", "阳浮而阴弱", "汗自出", "恶风", "桂枝汤主之"],
+        brief="太阳中风证为外感风邪所致表虚证，以发热汗出恶风脉浮缓为特征，桂枝汤主之。",
+    ),
+    "太阳伤寒证": ConceptMapping(
+        concept="太阳伤寒证",
+        defining_clauses=[3],  # "太阳病，或已发热，或未发热，必恶寒，体痛，呕逆，脉阴阳俱紧者，名为伤寒。"
+        treatment_clauses=[35],
+        related_formulas=["麻黄汤"],
+        expansion_keywords=["太阳伤寒", "无汗", "身疼痛", "脉浮紧", "麻黄汤主之"],
+        brief="太阳伤寒证为外感寒邪所致表实证，以恶寒无汗身疼痛脉浮紧为特征，麻黄汤主之。",
+    ),
+    "蓄水证": ConceptMapping(
+        concept="蓄水证",
+        defining_clauses=[71],
+        treatment_clauses=[71],
+        related_formulas=["五苓散"],
+        expansion_keywords=["小便不利", "消渴", "烦渴", "水入则吐", "五苓散主之", "脉浮"],
+        brief="蓄水证为太阳病邪传膀胱、气化不利、水停下焦，以小便不利、口渴为特征，五苓散主之。",
+    ),
+    "蓄血证": ConceptMapping(
+        concept="蓄血证",
+        defining_clauses=[106, 124],
+        treatment_clauses=[106, 124],
+        related_formulas=["桃核承气汤", "抵当汤"],
+        expansion_keywords=["蓄血", "少腹急结", "少腹硬满", "如狂", "发狂", "小便自利", "桃核承气汤", "抵当汤"],
+        brief="蓄血证为邪热内传、瘀血结于下焦，以少腹急结/硬满、如狂/发狂、小便自利为特征。",
+    ),
+    "结胸证": ConceptMapping(
+        concept="结胸证",
+        defining_clauses=[135, 142],
+        treatment_clauses=[135, 152],
+        related_formulas=["大陷胸汤", "小陷胸汤"],
+        expansion_keywords=["结胸", "心下痛", "按之石硬", "脉沉而紧", "大陷胸汤主之", "小结胸", "按之则痛"],
+        brief="结胸证为邪热与痰水结于心下，以心下硬满疼痛为特征，分大结胸（大陷胸汤）和小结胸（小陷胸汤）。",
+    ),
+    "痞证": ConceptMapping(
+        concept="痞证",
+        defining_clauses=[149, 166],
+        treatment_clauses=[149, 169],
+        related_formulas=["半夏泻心汤", "大黄黄连泻心汤", "生姜泻心汤", "甘草泻心汤"],
+        expansion_keywords=["心下痞", "按之濡", "但气痞耳", "半夏泻心汤", "泻心汤"],
+        brief="痞证为脾胃不和、寒热错杂所致心下痞满而不痛，以半夏泻心汤等泻心汤类主之。",
+    ),
+    "脏结": ConceptMapping(
+        concept="脏结",
+        defining_clauses=[142],
+        treatment_clauses=[142],
+        related_formulas=[],
+        expansion_keywords=["脏结", "如结胸状", "饮食如故", "时时下利", "寸脉浮", "关脉小细沉紧"],
+        brief="脏结为脏气虚寒结滞，状如结胸而饮食如故、时时下利，属难治之证。",
+    ),
+    "虚烦证": ConceptMapping(
+        concept="虚烦证",
+        defining_clauses=[76],
+        treatment_clauses=[76],
+        related_formulas=["栀子豉汤"],
+        expansion_keywords=["虚烦", "不得眠", "反复颠倒", "心中懊憹", "栀子豉汤主之"],
+        brief="虚烦证为汗吐下后余热留扰胸膈，以虚烦不得眠、心中懊憹为特征，栀子豉汤主之。",
+    ),
+    "悬饮": ConceptMapping(
+        concept="悬饮",
+        defining_clauses=[152],
+        treatment_clauses=[152],
+        related_formulas=["十枣汤"],
+        expansion_keywords=["悬饮", "心下痞硬满", "引胁下痛", "十枣汤主之"],
+        brief="悬饮为水饮停聚于胸胁，以心下痞硬满、引胁下痛为特征，十枣汤主之。",
+    ),
+    "脾约": ConceptMapping(
+        concept="脾约",
+        defining_clauses=[247],
+        treatment_clauses=[247],
+        related_formulas=["麻子仁丸"],
+        expansion_keywords=["脾约", "大便则硬", "小便数", "趺阳脉浮而涩", "麻子仁丸主之"],
+        brief="脾约为胃强脾弱、津液偏渗所致大便硬，以小便数、大便硬为特征，麻子仁丸主之。",
+    ),
+}
+
+
+class ConceptMapper:
+    """概念映射器
+
+    将现代中医概念查询映射到经典条文，解决语义鸿沟问题。
+
+    用法：
+        mapper = ConceptMapper()
+        result = mapper.lookup("什么是阳明病？")
+        if result:
+            print(result.all_clauses)  # [195, 223, 208]
+    """
+
+    def __init__(self) -> None:
+        self._map = CONCEPT_MAP.copy()
+
+    def lookup(self, query: str) -> ConceptMapping | None:
+        """查询概念映射
+
+        Args:
+            query: 用户查询文本
+
+        Returns:
+            匹配到的 ConceptMapping，未匹配返回 None
+        """
+        # 去除问题词，提取核心概念
+        core = query
+        question_words = [
+            "什么是", "解释一下", "解释", "是什么", "是什么呢",
+            "请问", "的", "？", "?", "证", "病",
+        ]
+        for word in question_words:
+            core = core.replace(word, "")
+        core = core.strip()
+
+        # 精确匹配
+        for concept, mapping in self._map.items():
+            if concept == core or concept == query:
+                return mapping
+
+        # 包含匹配（查询包含概念名）
+        for concept, mapping in self._map.items():
+            if concept in query:
+                return mapping
+
+        # 反向匹配（概念名是查询的子串）
+        for concept, mapping in self._map.items():
+            # 去掉"证"/"病"后比较
+            stripped = concept.rstrip("证病")
+            if stripped and stripped in core and len(stripped) >= 2:
+                return mapping
+
+        return None
+
+    def expand_query(self, query: str) -> str:
+        """扩展查询，加入文言文关键词
+
+        用于 BM25 fallback：将现代概念查询扩展为文言文关键词，
+        提高关键词匹配的命中率。
+
+        Args:
+            query: 原始查询
+
+        Returns:
+            扩展后的查询字符串
+        """
+        mapping = self.lookup(query)
+        if mapping and mapping.expansion_keywords:
+            # 原始查询 + 扩展关键词
+            expanded = query
+            for kw in mapping.expansion_keywords:
+                if kw not in expanded:
+                    expanded += " " + kw
+            return expanded
+        return query
+
+    @property
+    def concepts(self) -> list[str]:
+        """所有已映射概念"""
+        return list(self._map.keys())

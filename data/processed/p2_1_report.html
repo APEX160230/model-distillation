@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P2.1 评测报告 — 中医经典知识检索助手</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Microsoft YaHei", sans-serif; background: #f8f8f6; color: #2c2c2a; line-height: 1.6; padding: 24px; }
+  h1 { font-size: 24px; font-weight: 600; margin-bottom: 8px; }
+  h2 { font-size: 18px; font-weight: 600; margin: 32px 0 12px; }
+  h3 { font-size: 15px; font-weight: 500; margin: 20px 0 8px; }
+  .subtitle { color: #5f5e5a; font-size: 14px; margin-bottom: 24px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 32px; }
+  .card { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e5e5e0; }
+  .card .label { font-size: 12px; color: #5f5e5a; margin-bottom: 8px; }
+  .card .value { font-size: 28px; font-weight: 600; }
+  .card .delta { font-size: 13px; margin-top: 4px; }
+  .delta-up { color: #0F6E56; }
+  .delta-flat { color: #5f5e5a; }
+  .delta-new { color: #185FA5; }
+  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e5e0; }
+  th, td { padding: 10px 16px; text-align: center; font-size: 13px; }
+  th { background: #f1efe8; font-weight: 600; }
+  td:first-child, th:first-child { text-align: left; }
+  .best { font-weight: 600; color: #0F6E56; }
+  .chart-container { background: #fff; border-radius: 12px; padding: 20px; border: 1px solid #e5e5e0; margin-bottom: 24px; }
+  .chart-wrapper { position: relative; width: 100%; height: 350px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #5f5e5a; }
+  .legend span { display: flex; align-items: center; gap: 4px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 2px; }
+  .highlight { background: #e1f5ee; padding: 16px; border-radius: 8px; margin: 16px 0; border-left: 3px solid #1D9E75; }
+  .highlight-bad { background: #faece7; padding: 16px; border-radius: 8px; margin: 16px 0; border-left: 3px solid #D85A30; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e5e5e0; font-size: 12px; color: #5f5e5a; }
+</style>
+</head>
+<body>
+
+<h1>P2.1 评测报告</h1>
+<p class="subtitle">ConceptMapper + GraphRAG + LLM-as-judge | 中医经典知识检索助手 | 2026-08-06</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="label">recall@5</div>
+    <div class="value">100%</div>
+    <div class="delta delta-up">↑ 1748% (P0: 5.4%)</div>
+  </div>
+  <div class="card">
+    <div class="label">keyword accuracy</div>
+    <div class="value">72.1%</div>
+    <div class="delta delta-up">↑ 294% (P0: 18.3%)</div>
+  </div>
+  <div class="card">
+    <div class="label">LLM judge 均分</div>
+    <div class="value">3.56<span style="font-size:16px;color:#5f5e5a">/5.0</span></div>
+    <div class="delta delta-new">新增指标</div>
+  </div>
+  <div class="card">
+    <div class="label">延迟 p50</div>
+    <div class="value">3.73s</div>
+    <div class="delta delta-flat">P2.0: 1.17s</div>
+  </div>
+</div>
+
+<h2>四阶段核心指标对比</h2>
+
+<div class="chart-container">
+  <div class="legend">
+    <span><span class="dot" style="background:#888780"></span>P0 纯向量+原始模型</span>
+    <span><span class="dot" style="background:#EF9F27"></span>P1 LoRA微调</span>
+    <span><span class="dot" style="background:#378ADD"></span>P2.0 混合检索</span>
+    <span><span class="dot" style="background:#1D9E75"></span>P2.1 概念映射+GraphRAG</span>
+  </div>
+  <div class="chart-wrapper">
+    <canvas id="mainChart"></canvas>
+  </div>
+</div>
+
+<table>
+  <tr>
+    <th>指标</th>
+    <th>P0</th>
+    <th>P1</th>
+    <th>P2.0</th>
+    <th class="best">P2.1</th>
+    <th>P0→P2.1</th>
+  </tr>
+  <tr>
+    <td>recall@5</td>
+    <td>5.41%</td>
+    <td>5.41%</td>
+    <td>83.78%</td>
+    <td class="best">100.00%</td>
+    <td>+1748%</td>
+  </tr>
+  <tr>
+    <td>keyword accuracy</td>
+    <td>18.30%</td>
+    <td>23.20%</td>
+    <td>50.79%</td>
+    <td class="best">72.06%</td>
+    <td>+294%</td>
+  </tr>
+  <tr>
+    <td>LLM judge 均分</td>
+    <td>—</td>
+    <td>—</td>
+    <td>—</td>
+    <td class="best">3.56/5</td>
+    <td>新增</td>
+  </tr>
+  <tr>
+    <td>LLM judge 中位数</td>
+    <td>—</td>
+    <td>—</td>
+    <td>—</td>
+    <td class="best">3.50/5</td>
+    <td>新增</td>
+  </tr>
+  <tr>
+    <td>延迟 p50</td>
+    <td>2.51s</td>
+    <td>40.64s</td>
+    <td>1.17s</td>
+    <td class="best">3.73s</td>
+    <td>+1.22s</td>
+  </tr>
+  <tr>
+    <td>延迟 p95</td>
+    <td>9.28s</td>
+    <td>96.69s</td>
+    <td>3.55s</td>
+    <td class="best">5.71s</td>
+    <td>-3.57s</td>
+  </tr>
+</table>
+
+<h2>分类表现对比</h2>
+
+<div class="chart-container">
+  <div class="legend">
+    <span><span class="dot" style="background:#888780"></span>P0</span>
+    <span><span class="dot" style="background:#EF9F27"></span>P1</span>
+    <span><span class="dot" style="background:#378ADD"></span>P2.0</span>
+    <span><span class="dot" style="background:#1D9E75"></span>P2.1</span>
+  </div>
+  <div class="chart-wrapper">
+    <canvas id="catChart"></canvas>
+  </div>
+</div>
+
+<table>
+  <tr>
+    <th>分类</th>
+    <th>P0</th>
+    <th>P1</th>
+    <th>P2.0</th>
+    <th class="best">P2.1</th>
+    <th>Judge 均分</th>
+  </tr>
+  <tr>
+    <td>方剂查询</td>
+    <td>65.53%</td>
+    <td>84.33%</td>
+    <td>84.94%</td>
+    <td class="best">100.00%</td>
+    <td>3.15</td>
+  </tr>
+  <tr>
+    <td>药材关联</td>
+    <td>10.95%</td>
+    <td>9.52%</td>
+    <td>14.76%</td>
+    <td class="best">80.13%</td>
+    <td>3.85</td>
+  </tr>
+  <tr>
+    <td>经典原文检索</td>
+    <td>1.56%</td>
+    <td>1.82%</td>
+    <td>95.65%</td>
+    <td class="best">92.98%</td>
+    <td>3.77</td>
+  </tr>
+  <tr>
+    <td>经典解释</td>
+    <td>3.33%</td>
+    <td>8.33%</td>
+    <td>2.92%</td>
+    <td class="best">28.83%</td>
+    <td>3.50</td>
+  </tr>
+  <tr>
+    <td>综合问答</td>
+    <td>18.71%</td>
+    <td>22.21%</td>
+    <td>15.71%</td>
+    <td class="best">23.71%</td>
+    <td>3.30</td>
+  </tr>
+</table>
+
+<h2>P2.1 三项改进效果</h2>
+
+<div class="highlight">
+  <h3>✓ ConceptMapper 概念映射 — 消除幻觉</h3>
+  <p><b>问题</b>：P2.0 中"什么是阳明病"被改写为"阳明病"后，BM25/向量检索找到含"阳明病"的长条文而非定义条文（clause 195"阳明之为病，胃家实也"），模型幻觉为"太阳与阳明合病"。</p>
+  <p><b>修复</b>：ConceptMapper 直接映射到六经提纲条文 + 概念简述传入 context_extras，模型输出"阳明病为外感病阳热亢盛阶段，分经证（白虎汤）和腑证（承气汤）"——完全正确。</p>
+  <p><b>命中</b>：10/10 语义查询全部命中概念映射（太阳中风、阳明病、厥阴病、蓄水证、结胸证等）</p>
+</div>
+
+<div class="highlight">
+  <h3>✓ GraphRAG 知识图谱 — 药材关联飞跃</h3>
+  <p><b>问题</b>：P2.0 药材关联仅 14.76%，BM25+向量无法有效检索"含有X药材的方剂"。</p>
+  <p><b>修复</b>：GraphRAG 构建 269 节点/518 边的知识图谱（71方剂+62药材+71证候），支持药材→方剂→条文的多跳查询。</p>
+  <p><b>效果</b>：药材关联从 14.76% → <b>80.13%</b>（+443%），LLM judge 评分 3.85/5.0（全类别最高）</p>
+</div>
+
+<div class="highlight">
+  <h3>✓ LLM-as-judge — 公平的答案质量评估</h3>
+  <p><b>问题</b>：keyword_accuracy 对解释类问题严重失真——`re.findall(r"[\u4e00-\u9fff]{2,}", expected)` 匹配整句中文而非关键词，经典解释类仅 2.92%。</p>
+  <p><b>修复</b>：用 qwen2.5:1.5b 作 judge（temperature=0.1），0-5 分制评分（正确性0-2 + 完整性0-2 + 相关性0-1）。</p>
+  <p><b>效果</b>：50 题全部评分成功，均分 3.56/5.0，药材关联最高(3.85)、方剂查询最低(3.15，模型偶尔漏列药材)</p>
+</div>
+
+<h2>路由分布与上下文命中</h2>
+
+<div class="chart-container">
+  <div class="chart-wrapper" style="height: 250px;">
+    <canvas id="routeChart"></canvas>
+  </div>
+</div>
+
+<table>
+  <tr><th>路由类型</th><th>题数</th><th>上下文类型</th><th>命中次数</th></tr>
+  <tr><td>clause_id</td><td>15</td><td>—</td><td>—</td></tr>
+  <tr><td>formula</td><td>10</td><td>formula_info</td><td>10</td></tr>
+  <tr><td>herb</td><td>10</td><td>herb_query</td><td>10</td></tr>
+  <tr><td>semantic</td><td>10</td><td>concept</td><td>10</td></tr>
+  <tr><td>comparison</td><td>5</td><td>comparison</td><td>5</td></tr>
+</table>
+
+<div class="highlight">
+  <p><b>上下文传递率 100%</b>：35/35 非条文号查询全部获得了结构化上下文（概念简述/方剂信息/药材列表/对比数据），帮助 1.5B 模型生成更准确的答案。</p>
+</div>
+
+<h2>待改进项</h2>
+
+<div class="highlight-bad">
+  <h3>方剂查询 Judge 最低（3.15/5.0）</h3>
+  <p>虽然 keyword accuracy 达到 100%，但 LLM judge 评分最低——模型偶尔漏列药材或解释不够完整。可通过更详细的方剂 prompt 模板改进。</p>
+</div>
+
+<div class="highlight-bad">
+  <h3>综合问答仍有提升空间（23.71% / Judge 3.30）</h3>
+  <p>方剂对比类问题模型能识别差异但表述不够系统化。GraphRAG 的 compare_formulas 数据已传入但 1.5B 模型的生成能力有限。</p>
+</div>
+
+<div class="footer">
+  <p>项目：端侧模型蒸馏 — 中医经典知识检索助手 | 基座模型：Qwen2.5-1.5B-Instruct (Q4 量化) | 评测题数：50</p>
+  <p>技术栈：LoRA 微调 + ConceptMapper + GraphRAG (NetworkX) + BM25 (jieba) + Vector (bge-small-zh) + RRF 融合 + Ollama 推理</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+new Chart(document.getElementById('mainChart'), {
+  type: 'bar',
+  data: {
+    labels: ['recall@5', 'keyword accuracy', 'LLM judge (×0.2)'],
+    datasets: [
+      {label:'P0', data:[0.0541,0.1830,0], backgroundColor:'#888780', borderRadius:4},
+      {label:'P1', data:[0.0541,0.2320,0], backgroundColor:'#EF9F27', borderRadius:4},
+      {label:'P2.0', data:[0.8378,0.5079,0], backgroundColor:'#378ADD', borderRadius:4},
+      {label:'P2.1', data:[1.0000,0.7206,0.712], backgroundColor:'#1D9E75', borderRadius:4}
+    ]
+  },
+  options: {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.parsed.y*100).toFixed(1)+'%'}}},
+    scales:{y:{max:1.05, ticks:{callback:v=>(v*100).toFixed(0)+'%'}}}
+  }
+});
+new Chart(document.getElementById('catChart'), {
+  type:'bar',
+  data:{
+    labels:['原文检索','方剂查询','药材关联','经典解释','综合问答'],
+    datasets:[
+      {label:'P0', data:[0.0156,0.6553,0.1095,0.0333,0.1871], backgroundColor:'#888780', borderRadius:3},
+      {label:'P1', data:[0.0182,0.8433,0.0952,0.0833,0.2221], backgroundColor:'#EF9F27', borderRadius:3},
+      {label:'P2.0', data:[0.9565,0.8494,0.1476,0.0292,0.1571], backgroundColor:'#378ADD', borderRadius:3},
+      {label:'P2.1', data:[0.9298,1.0000,0.8013,0.2883,0.2371], backgroundColor:'#1D9E75', borderRadius:3}
+    ]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{display:false}, tooltip:{callbacks:{label:c=>c.dataset.label+': '+(c.parsed.y*100).toFixed(1)+'%'}}},
+    scales:{y:{max:1.05, ticks:{callback:v=>(v*100).toFixed(0)+'%'}}}
+  }
+});
+new Chart(document.getElementById('routeChart'), {
+  type:'doughnut',
+  data:{
+    labels:['clause_id (15)','formula (10)','herb (10)','semantic (10)','comparison (5)'],
+    datasets:[{data:[15,10,10,10,5], backgroundColor:['#534AB7','#378ADD','#1D9E75','#EF9F27','#D85A30'], borderWidth:0}]
+  },
+  options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{legend:{position:'right', labels:{font:{size:12}}}}
+  }
+});
+</script>
+
+</body>
+</html>

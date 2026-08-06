@@ -6,6 +6,11 @@ data/processed/*
 !data/processed/sft_train_p1.jsonl
 !data/processed/p1_lora_report.json
 !data/processed/p0_vs_p1_comparison.json
+!data/processed/p2_hybrid_report.json
+!data/processed/p2_1_report.json
+!data/processed/p2_1_report.html
+!data/processed/p0_p1_p2_comparison.json
+!data/processed/p0_p1_p2_p21_comparison.json
 
 # ChromaDB 持久化（可重建）
 data/chroma/

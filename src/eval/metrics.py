@@ -8,6 +8,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from collections import defaultdict
+from typing import Any
 
 
 @dataclass
@@ -21,6 +22,10 @@ class EvalResult:
     reference_clauses: list[int]
     retrieved_clauses: list[int]
     latency: float
+    route_type: str = ""  # P2.0+ 查询路由类型
+    judge_score: float = -1.0  # P2.1+ LLM 评判分数 (0-5, -1=未评判)
+    judge_reasoning: str = ""  # P2.1+ 评判理由
+    context_extras: dict[str, Any] | None = None  # P2.1+ 结构化上下文
 
 
 def compute_recall_at_k(results: list[EvalResult], k: int = 5) -> float:
@@ -128,6 +133,37 @@ def compute_category_accuracy(results: list[EvalResult]) -> dict[str, float]:
     }
 
 
+def compute_judge_scores(results: list[EvalResult]) -> dict[str, float]:
+    """计算 LLM judge 分数统计
+
+    Args:
+        results: 评测结果列表
+
+    Returns:
+        {"mean": 平均分, "median": 中位数, "category_mean": {类别: 平均分}}
+    """
+    valid = [r for r in results if r.judge_score >= 0]
+    if not valid:
+        return {"mean": 0.0, "median": 0.0, "category_mean": {}}
+
+    scores = sorted(r.judge_score for r in valid)
+    n = len(scores)
+    median = scores[n // 2] if n % 2 == 1 else (scores[n // 2 - 1] + scores[n // 2]) / 2
+
+    cat_scores: dict[str, list[float]] = defaultdict(list)
+    for r in valid:
+        cat_scores[r.category].append(r.judge_score)
+
+    return {
+        "mean": round(sum(scores) / n, 2),
+        "median": round(median, 2),
+        "category_mean": {
+            cat: round(sum(s) / len(s), 2)
+            for cat, s in cat_scores.items()
+        },
+    }
+
+
 def generate_report(results: list[EvalResult], stage: str = "P0") -> dict:
     """生成完整评测报告
 
@@ -138,24 +174,36 @@ def generate_report(results: list[EvalResult], stage: str = "P0") -> dict:
     Returns:
         完整报告字典
     """
-    return {
+    report = {
         "stage": stage,
         "total_questions": len(results),
         "recall_at_5": round(compute_recall_at_k(results, k=5), 4),
         "keyword_accuracy": round(compute_keyword_accuracy(results), 4),
         "category_accuracy": compute_category_accuracy(results),
         "latency": compute_latency_stats(results),
-        "details": [
-            {
-                "question_id": r.question_id,
-                "category": r.category,
-                "question": r.question,
-                "answer": r.answer,
-                "expected_answer": r.expected_answer,
-                "reference_clauses": r.reference_clauses,
-                "retrieved_clauses": r.retrieved_clauses,
-                "latency": r.latency,
-            }
-            for r in results
-        ],
     }
+
+    # P2.1+: 如果有 judge 分数，加入报告
+    judge_stats = compute_judge_scores(results)
+    if judge_stats["mean"] > 0:
+        report["llm_judge"] = judge_stats
+
+    report["details"] = [
+        {
+            "question_id": r.question_id,
+            "category": r.category,
+            "question": r.question,
+            "answer": r.answer,
+            "expected_answer": r.expected_answer,
+            "reference_clauses": r.reference_clauses,
+            "retrieved_clauses": r.retrieved_clauses,
+            "latency": r.latency,
+            "route_type": r.route_type,
+            "judge_score": r.judge_score,
+            "judge_reasoning": r.judge_reasoning,
+            "context_extras": r.context_extras,
+        }
+        for r in results
+    ]
+
+    return report

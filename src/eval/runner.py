@@ -53,6 +53,8 @@ class EvalRunner:
             response = self._pipeline.query(question, temperature=0.3, max_tokens=512)
 
             retrieved_clauses = [doc.clause_id for doc in response.retrieved_docs]
+            route_type = getattr(response, "route_type", "")
+            context_extras = getattr(response, "context_extras", None)
 
             result = EvalResult(
                 question_id=item.get("id", i),
@@ -63,6 +65,8 @@ class EvalRunner:
                 reference_clauses=ref_clauses,
                 retrieved_clauses=retrieved_clauses,
                 latency=response.latency,
+                route_type=route_type,
+                context_extras=context_extras,
             )
             results.append(result)
 
