@@ -159,7 +159,7 @@ class QueryRouter:
         匹配条件：查询中包含已知方剂名，且查询模式符合"组成/方剂"类问题
         """
         # 先检查是否是组成类查询
-        formula_indicators = ["组成", "方剂", "配方", "药物", "有哪些药"]
+        formula_indicators = ["组成", "方剂", "配方", "药物", "有哪些药", "怎么用", "治什么", "能治", "什么时候能用", "适合什么"]
         is_formula_query = any(ind in query for ind in formula_indicators)
 
         # 也匹配 "X汤" 直接出现
@@ -185,8 +185,13 @@ class QueryRouter:
 
         匹配条件：查询中包含 "含有" / "含" / "用" 等关键词 + 已知药材名
         """
-        herb_indicators = ["含有", "含", "用到", "用的", "有.*药"]
+        herb_indicators = ["含有", "含", "用到", "用的", "有.*药", "哪些方子有", "哪些方", "用在哪些", "配什么", "搭配", "一起用", "常配"]
         is_herb_query = any(ind in query for ind in herb_indicators)
+
+        # 也检查是否直接包含已知药材名且问"方子"/"方剂"
+        if not is_herb_query:
+            if ("方子" in query or "方剂" in query or "方" in query) and any(h in query for h in self._herb_names):
+                is_herb_query = True
 
         if not is_herb_query:
             return []
@@ -203,7 +208,7 @@ class QueryRouter:
 
         匹配模式："X和Y的区别" / "X与Y有什么不同" / "X和Y"
         """
-        comparison_indicators = ["区别", "不同", "差异", "对比", "比较"]
+        comparison_indicators = ["区别", "不同", "差异", "对比", "比较", "区分", "怎么分", "什么时候用哪个", "怎么选", "哪个好", "怎么辨别"]
         is_comparison = any(ind in query for ind in comparison_indicators)
 
         if not is_comparison:

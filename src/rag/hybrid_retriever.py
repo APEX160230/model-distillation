@@ -341,17 +341,26 @@ class HybridRetriever:
     def _search_semantic(
         self, original_query: str, rewritten_query: str, top_k: int
     ) -> list[RetrievalResult]:
-        """语义查询：ConceptMapper → GraphRAG → BM25+向量 RRF 融合
+        """语义查询：ConceptMapper → 症状推断 → GraphRAG → BM25+向量 RRF 融合
 
-        P2.1 升级：
-        1. 先查 ConceptMapper，命中则直接返回映射条文
-        2. 未命中则用 GraphRAG 查证候→方剂→条文
-        3. 最后 fallback 到 BM25+向量 RRF 融合
+        P2.2 升级：
+        0. 超范围检测 → 返回空结果 + out_of_scope 标记
+        1. 先查 ConceptMapper 概念映射
+        2. 未命中则尝试症状→证候推断
+        3. 未命中则 GraphRAG 证候查询
+        4. 最后 fallback 到 BM25+向量 RRF 融合（用口语扩展查询）
         """
+        # 0. 超范围检测
+        if self._concept_mapper.is_out_of_scope(original_query):
+            self._last_context["out_of_scope"] = {
+                "query": original_query,
+                "message": "本系统仅收录伤寒论相关方证知识，不涵盖此查询领域。",
+            }
+            return []
+
         # 1. ConceptMapper 概念映射
         concept = self._concept_mapper.lookup(original_query)
         if concept and concept.all_clauses:
-            # 存储概念信息到上下文
             self._last_context["concept"] = {
                 "concept": concept.concept,
                 "brief": concept.brief,
@@ -359,10 +368,7 @@ class HybridRetriever:
                 "defining_clauses": concept.defining_clauses,
                 "treatment_clauses": concept.treatment_clauses,
             }
-
             results = self._clauses_to_results(concept.all_clauses, distance=0.0)
-
-            # 用扩展关键词做 BM25 补充
             if len(results) < top_k and concept.expansion_keywords:
                 expanded_query = " ".join(concept.expansion_keywords)
                 bm25_results = self._bm25.search(expanded_query, top_k=top_k * 2)
@@ -373,11 +379,36 @@ class HybridRetriever:
                         existing_ids.add(r.id)
                         if len(results) >= top_k:
                             break
-
             return results[:top_k]
 
-        # 2. GraphRAG 证候查询（模糊匹配）
-        # 提取核心概念词
+        # 2. 症状→证候推断（P2.2 新增）
+        symptoms = self._concept_mapper.extract_symptoms(original_query)
+        if symptoms:
+            concept = self._concept_mapper.lookup_by_symptoms(symptoms)
+            if concept and concept.all_clauses:
+                self._last_context["concept"] = {
+                    "concept": concept.concept,
+                    "brief": concept.brief,
+                    "related_formulas": concept.related_formulas,
+                    "defining_clauses": concept.defining_clauses,
+                    "treatment_clauses": concept.treatment_clauses,
+                    "matched_symptoms": symptoms,
+                }
+                results = self._clauses_to_results(concept.all_clauses, distance=0.0)
+                # BM25 补充（用口语扩展查询）
+                expanded = self._concept_mapper.expand_colloquial(original_query)
+                if len(results) < top_k:
+                    bm25_results = self._bm25.search(expanded, top_k=top_k * 2)
+                    existing_ids = {r.id for r in results}
+                    for r in bm25_results:
+                        if r.id not in existing_ids:
+                            results.append(r)
+                            existing_ids.add(r.id)
+                            if len(results) >= top_k:
+                                break
+                return results[:top_k]
+
+        # 3. GraphRAG 证候查询（模糊匹配）
         core = rewritten_query.strip("？?。.，,的")
         graph_result = self._graph.query_by_syndrome(core)
         if graph_result.clause_ids:
@@ -388,10 +419,9 @@ class HybridRetriever:
             results = self._clauses_to_results(graph_result.clause_ids, distance=0.0)
             if len(results) >= top_k:
                 return results[:top_k]
-
-            # 不足则补充 BM25+向量
             remaining = top_k - len(results)
-            bm25_results = self._bm25.search(rewritten_query, top_k=remaining + top_k)
+            expanded = self._concept_mapper.expand_colloquial(original_query)
+            bm25_results = self._bm25.search(expanded, top_k=remaining + top_k)
             vec_results = self._vector.query(rewritten_query, top_k=top_k * 2)
             fused = reciprocal_rank_fusion([bm25_results, vec_results])
             existing_ids = {r.id for r in results}
@@ -403,9 +433,12 @@ class HybridRetriever:
                         break
             return results[:top_k]
 
-        # 3. Fallback: BM25 + 向量 RRF 融合（用扩展查询）
-        expanded = self._concept_mapper.expand_query(original_query)
-        bm25_results = self._bm25.search(expanded, top_k=top_k * 2)
+        # 4. Fallback: BM25 + 向量 RRF 融合（用口语扩展查询）
+        expanded = self._concept_mapper.expand_colloquial(original_query)
+        # 同时保留 concept_mapper 的概念扩展
+        concept_expanded = self._concept_mapper.expand_query(original_query)
+        final_query = expanded if len(expanded) > len(concept_expanded) else concept_expanded
+        bm25_results = self._bm25.search(final_query, top_k=top_k * 2)
         vec_results = self._vector.query(rewritten_query, top_k=top_k * 2)
 
         return reciprocal_rank_fusion([bm25_results, vec_results])[:top_k]

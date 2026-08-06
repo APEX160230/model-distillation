@@ -94,6 +94,11 @@ def format_context_extras(extras: dict[str, Any] | None) -> str:
         if formulas:
             parts.append(f"【证候方剂】相关方剂：{'、'.join(formulas)}")
 
+    # 超范围标记
+    out_of_scope = extras.get("out_of_scope")
+    if out_of_scope:
+        parts.append(f"【范围提示】{out_of_scope.get('message', '')}")
+
     if not parts:
         return ""
 

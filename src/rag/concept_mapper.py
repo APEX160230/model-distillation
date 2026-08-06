@@ -180,20 +180,157 @@ CONCEPT_MAP: dict[str, ConceptMapping] = {
 }
 
 
+# ── 口语→文言同义词映射 ─────────────────────────────────────
+# 解决真实用户说"怕冷"但经典原文写"恶寒"的词汇鸿沟
+COLLOQUIAL_TO_CLASSICAL: dict[str, str] = {
+    "怕冷": "恶寒",
+    "怕风": "恶风",
+    "发烧": "发热",
+    "烧不退": "潮热",
+    "不出汗": "无汗",
+    "没汗": "无汗",
+    "不汗出": "无汗",
+    "出汗": "汗出",
+    "拉肚子": "下利",
+    "拉稀": "下利",
+    "肚子痛": "腹痛",
+    "肚子疼": "腹痛",
+    "肚子胀": "腹满",
+    "肚子硬": "腹硬",
+    "手脚凉": "手足厥逆",
+    "手脚冷": "手足厥冷",
+    "手冷": "手足冷",
+    "脚凉": "足寒",
+    "嗓子干": "咽干",
+    "嗓子疼": "咽痛",
+    "嘴苦": "口苦",
+    "嘴巴苦": "口苦",
+    "嘴里苦": "口苦",
+    "口干": "口渴",
+    "口渴": "大渴",
+    "口渴欲饮": "消渴",
+    "大汗": "大汗出",
+    "出汗多": "汗自出",
+    "脉很大": "脉洪大",
+    "脉大": "脉大",
+    "脉弱": "脉微",
+    "脉很细": "脉微细",
+    "心口堵": "心下痞",
+    "心口胀": "心下满",
+    "心口痛": "心下痛",
+    "心口硬": "心下硬",
+    "胸口闷": "胸胁苦满",
+    "两胁胀": "胸胁苦满",
+    "想吐": "欲呕",
+    "干呕": "干呕",
+    "恶心": "喜呕",
+    "不想吃": "不欲食",
+    "吃不下": "食不下",
+    "没精神": "但欲寐",
+    "犯困": "但欲寐",
+    "烦": "心烦",
+    "烦躁": "烦躁",
+    "身上疼": "身疼痛",
+    "骨头疼": "骨节疼痛",
+    "脖子僵": "项强",
+    "头痛": "头痛",
+    "头晕": "眩",
+    "眼睛花": "目眩",
+    "感冒": "伤寒",
+}
+
+# ── 症状→证候映射 ──────────────────────────────────────────
+# 用户描述症状而非证候名时，通过症状组合推断证候
+# key = 症状组合的 frozenset，value = ConceptMapping 概念名
+SYMPTOM_TO_CONCEPT: list[tuple[list[str], str]] = [
+    # 太阳伤寒表实证
+    (["头痛", "无汗", "恶寒"], "太阳伤寒证"),
+    (["头痛", "无汗", "身疼痛"], "太阳伤寒证"),
+    (["恶寒", "无汗", "身疼"], "太阳伤寒证"),
+    (["不出汗", "怕冷", "身疼"], "太阳伤寒证"),
+    (["感冒", "不出汗"], "太阳伤寒证"),
+    (["身上疼", "怕冷", "没汗"], "太阳伤寒证"),
+    (["伤寒", "无汗"], "太阳伤寒证"),
+    (["恶寒", "无汗"], "太阳伤寒证"),
+    # 太阳中风表虚证
+    (["发热", "汗出", "恶风"], "太阳中风证"),
+    (["发烧", "出汗", "怕风"], "太阳中风证"),
+    (["汗出", "恶风", "脉浮"], "太阳中风证"),
+    # 少阳病
+    (["口苦", "咽干", "目眩"], "少阳病"),
+    (["口苦", "咽干"], "少阳病"),
+    (["嘴苦", "嗓子干"], "少阳病"),
+    (["往来寒热", "胸胁苦满"], "少阳病"),
+    (["口苦", "目眩"], "少阳病"),
+    # 阳明经证
+    (["大热", "大汗", "大渴"], "阳明病"),
+    (["发热", "汗出", "口渴", "脉洪大"], "阳明病"),
+    (["发烧", "口渴", "出大汗", "脉很大"], "阳明病"),
+    (["身热", "汗自出", "不恶寒"], "阳明病"),
+    # 阳明腑证
+    (["潮热", "腹满", "便秘"], "阳明病"),
+    (["腹满", "大便硬", "潮热"], "阳明病"),
+    # 少阴寒化证
+    (["下利", "手足厥逆", "脉微"], "少阴病"),
+    (["下利清谷", "手足厥逆"], "少阴病"),
+    (["拉肚子", "手脚凉"], "少阴病"),
+    (["腹痛", "下利", "四肢沉重"], "少阴病"),
+    # 太阴病
+    (["腹满", "吐", "食不下", "自利"], "太阴病"),
+    (["肚子胀", "吃不下", "拉肚子"], "太阴病"),
+    # 痞证
+    (["心下痞", "满而不痛"], "痞证"),
+    (["心下痞满"], "痞证"),
+    (["心口堵"], "痞证"),
+    # 结胸证
+    (["心下痛", "按之石硬"], "结胸证"),
+    (["心下硬满", "疼痛"], "结胸证"),
+    # 蓄水证
+    (["小便不利", "口渴", "水入则吐"], "蓄水证"),
+    (["小便不利", "消渴"], "蓄水证"),
+    # 蓄血证
+    (["少腹急结", "如狂"], "蓄血证"),
+    (["少腹硬满", "发狂"], "蓄血证"),
+]
+
+# ── 超范围关键词 ────────────────────────────────────────────
+# 这些现代疾病名不在伤寒论知识范围内
+OUT_OF_SCOPE_KEYWORDS: list[str] = [
+    "高血压", "糖尿病", "癌症", "肿瘤", "冠心病", "心脏病",
+    "失眠", "抑郁症", "焦虑", "痛风", "风湿", "类风湿",
+    "颈椎病", "腰椎间盘", "骨质增生", "骨质疏松",
+    "肝炎", "肝硬化", "肾炎", "肾虚", "前列腺",
+    "湿疹", "荨麻疹", "银屑病", "白癜风",
+    "近视", "白内障", "青光眼",
+    "甲状腺", "乳腺", "子宫", "卵巢",
+    "减肥", "美容", "祛痘", "祛斑",
+    "肺癌", "胃癌", "肝癌", "肠癌",
+    "艾滋病", "新冠", "新冠肺炎",
+]
+
+
 class ConceptMapper:
     """概念映射器
 
     将现代中医概念查询映射到经典条文，解决语义鸿沟问题。
+    P2.2: 增加口语→文言同义词扩展和症状→证候推断。
 
     用法：
         mapper = ConceptMapper()
         result = mapper.lookup("什么是阳明病？")
         if result:
             print(result.all_clauses)  # [195, 223, 208]
+        # 口语扩展
+        expanded = mapper.expand_colloquial("头痛发烧怕冷不出汗")
+        # 症状推断
+        result = mapper.lookup_by_symptoms(["口苦", "咽干", "目眩"])
     """
 
     def __init__(self) -> None:
         self._map = CONCEPT_MAP.copy()
+        self._colloquial = COLLOQUIAL_TO_CLASSICAL.copy()
+        self._symptom_map = SYMPTOM_TO_CONCEPT.copy()
+        self._out_of_scope = set(OUT_OF_SCOPE_KEYWORDS)
 
     def lookup(self, query: str) -> ConceptMapping | None:
         """查询概念映射
@@ -259,3 +396,101 @@ class ConceptMapper:
     def concepts(self) -> list[str]:
         """所有已映射概念"""
         return list(self._map.keys())
+
+    def expand_colloquial(self, query: str) -> str:
+        """口语→文言同义词扩展
+
+        将查询中的口语词汇替换/补充为文言文对应词，
+        解决 BM25 关键词匹配的词汇鸿沟。
+
+        "头痛发烧怕冷不出汗" → "头痛 发热 恶寒 无汗"
+
+        Args:
+            query: 原始查询
+
+        Returns:
+            扩展后的查询（原始词 + 文言同义词）
+        """
+        expanded = query
+        for colloquial, classical in self._colloquial.items():
+            if colloquial in query:
+                if classical not in expanded:
+                    expanded += " " + classical
+        return expanded
+
+    def lookup_by_symptoms(self, symptoms: list[str]) -> ConceptMapping | None:
+        """通过症状组合推断证候
+
+        当用户描述症状而非证候名时，通过症状匹配推断最可能的证候。
+
+        Args:
+            symptoms: 症状列表（如 ["口苦", "咽干", "目眩"]）
+
+        Returns:
+            匹配到的 ConceptMapping，未匹配返回 None
+        """
+        symptom_set = set(symptoms)
+        best_match = None
+        best_score = 0
+
+        for required_symptoms, concept_name in self._symptom_map:
+            required_set = set(required_symptoms)
+            overlap = len(symptom_set & required_set)
+            if overlap == 0:
+                continue
+            # 匹配度 = 匹配症状数 / 需要症状数
+            score = overlap / len(required_set)
+            if score > best_score and score >= 0.5:
+                best_score = score
+                best_match = concept_name
+
+        if best_match:
+            return self._map.get(best_match)
+        return None
+
+    def extract_symptoms(self, query: str) -> list[str]:
+        """从查询中提取已知症状词
+
+        扫描查询中的所有口语和文言症状词。
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            提取到的症状列表（文言文形式）
+        """
+        symptoms: list[str] = []
+        # 检查文言症状词
+        classical_symptoms = [
+            "头痛", "发热", "恶寒", "恶风", "无汗", "汗出", "口苦",
+            "咽干", "目眩", "往来寒热", "胸胁苦满", "心下痞", "心下满",
+            "心下痛", "腹痛", "腹满", "下利", "手足厥逆", "脉浮",
+            "脉浮紧", "脉浮缓", "脉洪大", "脉微", "脉微细", "但欲寐",
+            "烦躁", "口渴", "消渴", "大汗", "潮热", "小便不利",
+            "不欲食", "食不下", "干呕", "喜呕", "项强", "身疼痛",
+            "骨节疼痛", "头项强痛",
+        ]
+        for s in classical_symptoms:
+            if s in query:
+                symptoms.append(s)
+
+        # 检查口语症状词，转成文言
+        for colloquial, classical in self._colloquial.items():
+            if colloquial in query and classical not in symptoms:
+                symptoms.append(classical)
+
+        return symptoms
+
+    def is_out_of_scope(self, query: str) -> bool:
+        """检查查询是否超出伤寒论知识范围
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            True 如果查询超出系统知识范围
+        """
+        for kw in self._out_of_scope:
+            if kw in query:
+                return True
+        return False
