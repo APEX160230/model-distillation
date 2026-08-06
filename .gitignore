@@ -1,6 +1,6 @@
 # 原始数据
 data/raw/
-data/processed/
+data/processed/*
 !data/processed/classics/
 !data/processed/p0_baseline_report.json
 !data/processed/sft_train_p1.jsonl
@@ -20,6 +20,8 @@ outputs/
 output_lora/
 output_merged/
 llama.cpp/
+llama-win-cpu-x64.zip
+*.zip
 
 # Python
 __pycache__/

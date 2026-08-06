@@ -1,20 +1,18 @@
-"""LoRA CPU 微调训练脚本 — Qwen2.5-1.5B-Instruct + 伤寒论 SFT 数据
+"""GPU QLoRA 微调训练脚本 — Qwen2.5-1.5B-Instruct + 伤寒论 SFT
 
-针对无 GPU 环境优化：
-- bfloat16 (CPU 原生支持，比 fp16 更稳定)
-- gradient checkpointing (省内存，代价是 ~30% 速度)
-- batch_size=1 + gradient_accumulation=8 (有效 batch=8)
-- 4 个 target modules (比 7 个省 40% 训练参数)
-- max_length=384 (中医 Q&A 通常 <300 token)
+针对 GTX 1650 (4GB VRAM) 优化：
+- 4-bit 量化 (bitsandbytes)：模型 0.8GB vs bfloat16 3GB
+- LoRA rank=8, 4 target modules
+- gradient checkpointing + use_reentrant=False
+- batch_size=1, gradient_accumulation=8
 
-预计耗时: 2-4 小时 (6 核 CPU, 8GB RAM)
+预计耗时: 10-30 分钟 (GPU 比 CPU 快 10-50x)
 """
 import os
 import sys
 import json
 import time
 import torch
-import gc
 from pathlib import Path
 from datasets import Dataset
 from transformers import (
@@ -23,16 +21,15 @@ from transformers import (
     TrainingArguments,
     Trainer,
     DataCollatorForSeq2Seq,
+    BitsAndBytesConfig,
+    TrainerCallback,
 )
-from peft import LoraConfig, get_peft_model, TaskType
-from transformers import TrainerCallback
+from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
 
 # ==================== 配置 ====================
-# HuggingFace 镜像 + 禁用 xet (国内镜像不支持 xet 协议)
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
-# 优先使用本地模型，避免网络下载
 _LOCAL_MODEL = Path("models/qwen25-15b-base")
 MODEL_NAME = str(_LOCAL_MODEL) if _LOCAL_MODEL.exists() else "Qwen/Qwen2.5-1.5B-Instruct"
 DATA_PATH = "data/processed/sft_train_p1.jsonl"
@@ -40,19 +37,19 @@ OUTPUT_DIR = "./output_lora"
 MERGED_DIR = "./output_merged"
 MAX_LENGTH = 384
 
-# LoRA 配置 — CPU 优化
-LORA_RANK = 8          # rank=8 比 16 省一半训练参数，1.5B 模型够用
+# QLoRA 配置
+LORA_RANK = 8
 LORA_ALPHA = 16
 LORA_DROPOUT = 0.05
-TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]  # 4 个而非 7 个
+TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
-# 训练配置 — CPU 优化
+# 训练配置
 LEARNING_RATE = 2e-4
-NUM_EPOCHS = 2          # 2 轮够了，3 轮容易过拟合
-BATCH_SIZE = 1          # CPU 内存有限
-GRAD_ACCUM = 8          # 有效 batch = 1*8 = 8
+NUM_EPOCHS = 2
+BATCH_SIZE = 1
+GRAD_ACCUM = 8
 WARMUP_RATIO = 0.05
-LOGGING_STEPS = 5       # 频繁日志方便监控进度
+LOGGING_STEPS = 5
 
 SYSTEM_PROMPT = (
     "你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。"
@@ -63,10 +60,8 @@ SYSTEM_PROMPT = (
 
 # ==================== 数据加载与格式化 ====================
 def load_sft_data(path: str) -> Dataset:
-    """加载 SFT JSONL 数据并转为 Qwen 对话格式"""
     with open(path, "r", encoding="utf-8") as f:
         raw = [json.loads(line) for line in f]
-
     records = []
     for item in raw:
         messages = [
@@ -75,14 +70,11 @@ def load_sft_data(path: str) -> Dataset:
             {"role": "assistant", "content": item["output"]},
         ]
         records.append({"messages": messages})
-
     return Dataset.from_list(records)
 
 
 def format_to_ids(example: dict, tokenizer) -> dict:
-    """将对话转为 token ids，构建 labels（只对 assistant 部分计算 loss）"""
     messages = example["messages"]
-    # 完整对话
     full_text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=False
     )
@@ -91,7 +83,6 @@ def format_to_ids(example: dict, tokenizer) -> dict:
         padding=False, return_tensors=None,
     )["input_ids"]
 
-    # prefix (system + user，不含 assistant 回答)
     prefix_text = tokenizer.apply_chat_template(
         messages[:2], tokenize=False, add_generation_prompt=True
     )
@@ -100,7 +91,6 @@ def format_to_ids(example: dict, tokenizer) -> dict:
         padding=False, return_tensors=None,
     )["input_ids"]
 
-    # labels: prefix 部分 -100，assistant 部分保留
     labels = [-100] * len(prefix_ids) + full_ids[len(prefix_ids):]
     labels = labels[:len(full_ids)]
 
@@ -113,83 +103,67 @@ def format_to_ids(example: dict, tokenizer) -> dict:
 
 # ==================== 训练 ====================
 def main():
-    print("=" * 60)
-    print("LoRA CPU 微调: Qwen2.5-1.5B-Instruct + 伤寒论 SFT")
-    print("=" * 60)
+    print("=" * 60, flush=True)
+    print("GPU QLoRA 微调: Qwen2.5-1.5B-Instruct + 伤寒论 SFT", flush=True)
+    print("=" * 60, flush=True)
 
     # 检查环境
-    print(f"\nPyTorch: {torch.__version__}")
-    print(f"CPU threads: {torch.get_num_threads()}")
-    torch.set_num_threads(6)
-    print(f"Set threads to: 6")
-
-    if torch.cuda.is_available():
-        print(f"GPU detected: {torch.cuda.get_device_name(0)}")
-        print("WARNING: This script is optimized for CPU. Using GPU may work but is not tested.")
-    else:
-        print("Mode: CPU-only training (bfloat16)")
+    print(f"\nPyTorch: {torch.__version__}", flush=True)
+    if not torch.cuda.is_available():
+        print("ERROR: CUDA not available. Use train_lora_cpu.py instead.", flush=True)
+        sys.exit(1)
+    gpu_name = torch.cuda.get_device_name(0)
+    vram_free = torch.cuda.mem_get_info()[0] / 1024**3
+    vram_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
+    print(f"GPU: {gpu_name}", flush=True)
+    print(f"VRAM: {vram_total:.1f}GB total, {vram_free:.1f}GB free", flush=True)
 
     # 检查数据文件
     if not Path(DATA_PATH).exists():
-        print(f"ERROR: 训练数据不存在: {DATA_PATH}")
+        print(f"ERROR: 训练数据不存在: {DATA_PATH}", flush=True)
         sys.exit(1)
 
     # 1. 加载 tokenizer
-    print("\n[1/6] 加载 tokenizer...")
+    print("\n[1/7] 加载 tokenizer...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(
         MODEL_NAME, trust_remote_code=True, padding_side="right"
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    print(f"Tokenizer loaded. Vocab size: {tokenizer.vocab_size}")
+    print(f"Tokenizer loaded. Vocab size: {tokenizer.vocab_size}", flush=True)
 
-    # 2. 加载模型 (bfloat16 节省内存)
-    print("\n[2/6] 加载模型 (bfloat16)...")
+    # 2. 配置 4-bit 量化
+    print("\n[2/7] 配置 4-bit 量化 (QLoRA)...", flush=True)
+    bnb_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=torch.float16,
+        bnb_4bit_use_double_quant=True,
+    )
+
+    # 3. 加载模型 (4-bit 量化)
+    print("\n[3/7] 加载模型 (4-bit)...", flush=True)
     t0 = time.time()
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_NAME,
-        dtype=torch.bfloat16,  # CPU 原生 bfloat16
-        device_map="cpu",
+        quantization_config=bnb_config,
+        device_map="auto",
         trust_remote_code=True,
-        low_cpu_mem_usage=True,
     )
-    model.config.use_cache = False  # 训练时关闭 KV cache
-    # 启用 gradient checkpointing
-    model.gradient_checkpointing_enable()
-    model.enable_input_require_grads()
-
+    model.config.use_cache = False
     load_time = time.time() - t0
-    mem_mb = sum(
-        p.nelement() * p.element_size() for p in model.parameters()
-    ) / 1024 / 1024
-    print(f"模型加载完成: {load_time:.1f}s, 内存占用: {mem_mb:.0f}MB")
-    print(f"模型参数量: {model.num_parameters() / 1e6:.1f}M")
+    vram_after_load = torch.cuda.mem_get_info()[0] / 1024**3
+    print(f"模型加载完成: {load_time:.1f}s", flush=True)
+    print(f"VRAM 使用: {vram_total - vram_after_load:.2f}GB / {vram_total:.1f}GB", flush=True)
+    print(f"模型参数量: {model.num_parameters() / 1e6:.1f}M", flush=True)
 
-    # 3. 加载和预处理数据
-    print("\n[3/6] 加载 SFT 训练数据...")
-    dataset = load_sft_data(DATA_PATH)
-    print(f"训练样本数: {len(dataset)}")
+    # 4. 准备 k-bit 训练
+    print("\n[4/7] 准备 k-bit 训练...", flush=True)
+    model = prepare_model_for_kbit_training(model)
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
 
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        raw = [json.loads(l) for l in f]
-    from collections import Counter
-    cats = Counter(r.get("category", "unknown") for r in raw)
-    print("类别分布:")
-    for cat, cnt in cats.most_common():
-        print(f"  {cat}: {cnt} ({cnt/len(raw)*100:.1f}%)")
-
-    print("\n预处理 (tokenize)...")
-    dataset = dataset.map(
-        lambda x: format_to_ids(x, tokenizer),
-        remove_columns=dataset.column_names,
-        desc="Tokenizing",
-    )
-    # 过滤掉太短的样本
-    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 10)
-    print(f"预处理后样本数: {len(dataset)}")
-
-    # 4. 配置 LoRA
-    print("\n[4/6] 配置 LoRA...")
+    # 5. 配置 LoRA
+    print("\n[5/7] 配置 LoRA...", flush=True)
     lora_config = LoraConfig(
         task_type=TaskType.CAUSAL_LM,
         r=LORA_RANK,
@@ -201,14 +175,36 @@ def main():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # 5. 训练
-    print("\n[5/6] 开始 CPU 训练...")
-    print(f"  Epochs: {NUM_EPOCHS}")
-    print(f"  Batch size: {BATCH_SIZE} x {GRAD_ACCUM} (effective: {BATCH_SIZE * GRAD_ACCUM})")
-    print(f"  Learning rate: {LEARNING_RATE}")
-    print(f"  Max length: {MAX_LENGTH}")
+    # 6. 加载和预处理数据
+    print("\n[6/7] 加载 SFT 训练数据...", flush=True)
+    dataset = load_sft_data(DATA_PATH)
+    print(f"训练样本数: {len(dataset)}", flush=True)
+
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        raw = [json.loads(l) for l in f]
+    from collections import Counter
+    cats = Counter(r.get("category", "unknown") for r in raw)
+    print("类别分布:", flush=True)
+    for cat, cnt in cats.most_common():
+        print(f"  {cat}: {cnt} ({cnt/len(raw)*100:.1f}%)", flush=True)
+
+    print("\n预处理 (tokenize)...", flush=True)
+    dataset = dataset.map(
+        lambda x: format_to_ids(x, tokenizer),
+        remove_columns=dataset.column_names,
+        desc="Tokenizing",
+    )
+    dataset = dataset.filter(lambda x: len(x["input_ids"]) > 10)
+    print(f"预处理后样本数: {len(dataset)}", flush=True)
+
+    # 7. 训练
+    print("\n[7/7] 开始 GPU 训练...", flush=True)
+    print(f"  Epochs: {NUM_EPOCHS}", flush=True)
+    print(f"  Batch size: {BATCH_SIZE} x {GRAD_ACCUM} (effective: {BATCH_SIZE * GRAD_ACCUM})", flush=True)
+    print(f"  Learning rate: {LEARNING_RATE}", flush=True)
+    print(f"  Max length: {MAX_LENGTH}", flush=True)
     total_steps = (len(dataset) // (BATCH_SIZE * GRAD_ACCUM)) * NUM_EPOCHS
-    print(f"  Estimated steps: ~{total_steps}")
+    print(f"  Estimated steps: ~{total_steps}", flush=True)
 
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
@@ -221,17 +217,16 @@ def main():
         save_strategy="steps",
         save_steps=50,
         save_total_limit=3,
-        use_cpu=True,        # 显式声明 CPU 训练
-        bf16=False,          # 模型已在 bfloat16，不需要 AMP
-        fp16=False,
+        fp16=True,           # GPU 用 fp16
         optim="adamw_torch",
         lr_scheduler_type="cosine",
         report_to="none",
         remove_unused_columns=False,
-        dataloader_pin_memory=False,  # CPU 不需要 pin_memory
-        dataloader_num_workers=0,     # 单线程加载，避免内存竞争
+        dataloader_pin_memory=False,
+        dataloader_num_workers=0,
         gradient_checkpointing=True,
-        disable_tqdm=True,   # 禁用 tqdm，避免 \r 刷新导致日志丢失
+        gradient_checkpointing_kwargs={"use_reentrant": False},
+        disable_tqdm=True,
     )
 
     data_collator = DataCollatorForSeq2Seq(
@@ -245,7 +240,7 @@ def main():
         data_collator=data_collator,
     )
 
-    # 自定义回调：每步输出进度到 stdout + 进度文件，强制 flush
+    # 自定义进度回调
     progress_file = os.path.join(OUTPUT_DIR, "progress.txt")
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -258,49 +253,52 @@ def main():
             step = state.global_step
             epoch = state.epoch
             pct = step / state.max_steps * 100 if state.max_steps else 0
-            line = f"[step {step}/{state.max_steps}] epoch={epoch:.2f} loss={loss} lr={lr} ({pct:.1f}%)"
+            vram_free = torch.cuda.mem_get_info()[0] / 1024**3 if torch.cuda.is_available() else 0
+            line = f"[step {step}/{state.max_steps}] epoch={epoch:.2f} loss={loss} lr={lr} vram_free={vram_free:.1f}GB ({pct:.1f}%)"
             print(line, flush=True)
             with open(progress_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
 
         def on_step_end(self, args, state, control, **kwargs):
-            # 每步都写一行心跳，方便监控进程是否活着
             with open(progress_file, "a", encoding="utf-8") as f:
                 f.write(f"heartbeat: step={state.global_step}/{state.max_steps} t={time.time():.0f}\n")
 
     trainer.add_callback(ProgressCallback())
 
     t_start = time.time()
-    # 支持从最近 checkpoint 恢复：如果有 checkpoint 就接着跑
     resume_ckpt = None
     ckpts = sorted(Path(OUTPUT_DIR).glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
     if ckpts:
         resume_ckpt = str(ckpts[-1])
-        print(f"  从 checkpoint 恢复: {resume_ckpt}")
+        print(f"  从 checkpoint 恢复: {resume_ckpt}", flush=True)
     train_result = trainer.train(resume_from_checkpoint=resume_ckpt)
     train_time = time.time() - t_start
 
-    print(f"\n训练完成!")
-    print(f"  Final loss: {train_result.training_loss:.4f}")
-    print(f"  Total time: {train_time/60:.1f} min ({train_time:.0f}s)")
+    print(f"\n训练完成!", flush=True)
+    print(f"  Final loss: {train_result.training_loss:.4f}", flush=True)
+    print(f"  Total time: {train_time/60:.1f} min ({train_time:.0f}s)", flush=True)
 
-    # 6. 保存
-    print("\n[6/6] 保存模型...")
-    # 保存 LoRA adapter
+    # 保存
+    print("\n保存模型...", flush=True)
     model.save_pretrained(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
-    print(f"LoRA adapter: {OUTPUT_DIR}/")
+    print(f"LoRA adapter: {OUTPUT_DIR}/", flush=True)
 
     # 合并 adapter 到基座模型
-    print("合并 adapter 到基座模型...")
-    merged_model = model.merge_and_unload()
-    merged_model.save_pretrained(MERGED_DIR, safe_serialization=True, max_shard_size="2GB")
-    tokenizer.save_pretrained(MERGED_DIR)
-    print(f"合并模型: {MERGED_DIR}/")
+    print("合并 adapter 到基座模型 (float16)...", flush=True)
+    try:
+        merged_model = model.merge_and_unload()
+        merged_model.save_pretrained(MERGED_DIR, safe_serialization=True, max_shard_size="2GB")
+        tokenizer.save_pretrained(MERGED_DIR)
+        print(f"合并模型: {MERGED_DIR}/", flush=True)
+    except Exception as e:
+        print(f"WARNING: 合并失败 (4-bit 模型不支持直接合并): {e}", flush=True)
+        print("LoRA adapter 已保存，可在推理时动态加载。", flush=True)
 
     # 保存训练统计
     stats = {
         "model": MODEL_NAME,
+        "method": "QLoRA (4-bit nf4)",
         "lora_rank": LORA_RANK,
         "lora_alpha": LORA_ALPHA,
         "target_modules": TARGET_MODULES,
@@ -314,19 +312,19 @@ def main():
         "train_time_seconds": round(train_time, 1),
         "train_time_minutes": round(train_time / 60, 1),
         "category_distribution": dict(cats),
-        "device": "CPU",
-        "dtype": "bfloat16",
+        "device": f"GPU ({gpu_name})",
+        "dtype": "float16 (compute) + nf4 (weights)",
         "gradient_checkpointing": True,
     }
     with open(f"{OUTPUT_DIR}/training_stats.json", "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
-    print(f"训练统计: {OUTPUT_DIR}/training_stats.json")
+    print(f"训练统计: {OUTPUT_DIR}/training_stats.json", flush=True)
 
-    print("\n" + "=" * 60)
-    print("全部完成!")
-    print(f"  LoRA adapter: {OUTPUT_DIR}/")
-    print(f"  合并模型: {MERGED_DIR}/")
-    print("=" * 60)
+    print("\n" + "=" * 60, flush=True)
+    print("全部完成!", flush=True)
+    print(f"  LoRA adapter: {OUTPUT_DIR}/", flush=True)
+    print(f"  合并模型: {MERGED_DIR}/", flush=True)
+    print("=" * 60, flush=True)
 
 
 if __name__ == "__main__":

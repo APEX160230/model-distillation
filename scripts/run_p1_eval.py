@@ -66,9 +66,14 @@ def compare_reports(p0: dict | None, p1: dict) -> dict:
                 "delta": round(p1_val - p0_val, 2),
             }
 
-        # 分类准确率对比
-        p0_cats = {c["category"]: c["accuracy"] for c in p0.get("category_accuracy", [])}
-        p1_cats = {c["category"]: c["accuracy"] for c in p1.get("category_accuracy", [])}
+        # 分类准确率对比（category_accuracy 是 dict: {category: accuracy}）
+        p0_cats = p0.get("category_accuracy", {})
+        if isinstance(p0_cats, list):
+            # 兼容旧格式
+            p0_cats = {c["category"]: c["accuracy"] for c in p0_cats}
+        p1_cats = p1.get("category_accuracy", {})
+        if isinstance(p1_cats, list):
+            p1_cats = {c["category"]: c["accuracy"] for c in p1_cats}
         comparison["category_comparison"] = {}
         for cat in sorted(set(p0_cats) | set(p1_cats)):
             p0_val = p0_cats.get(cat, 0)
