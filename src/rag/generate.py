@@ -42,11 +42,11 @@ class Generator:
     使用 ollama.chat API 进行文本生成。
 
     使用示例:
-        gen = Generator(model="qwen2.5:1.5b")
+        gen = Generator(model="qwen25-15b-tcm")
         answer = gen.generate("桂枝汤的组成", docs)
     """
 
-    def __init__(self, model: str = "qwen2.5:1.5b") -> None:
+    def __init__(self, model: str = "qwen25-15b-tcm") -> None:
         self._model = model
 
     def generate(

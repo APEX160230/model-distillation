@@ -31,7 +31,7 @@ class RAGPipeline:
     def __init__(
         self,
         chroma_path: str = "data/chroma",
-        model: str = "qwen2.5:1.5b",
+        model: str = "qwen25-15b-tcm",
         top_k: int = 5,
         generator=None,
     ) -> None:

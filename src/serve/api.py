@@ -42,7 +42,7 @@ def create_app(pipeline) -> FastAPI:
         return {
             "status": "ok",
             "vector_store_count": pipeline.retriever.count(),
-            "model": "qwen2.5:1.5b",
+            "model": "qwen25-15b-tcm",
         }
 
     @app.get("/api/graph/stats")

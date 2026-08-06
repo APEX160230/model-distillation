@@ -18,7 +18,7 @@ from src.serve.api import create_app
 def main():
     pipeline = RAGPipeline(
         chroma_path="data/chroma",
-        model="qwen2.5:1.5b",
+        model="qwen25-15b-tcm",
         top_k=5,
     )
     app = create_app(pipeline)
