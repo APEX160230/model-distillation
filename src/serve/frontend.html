@@ -3,231 +3,851 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>中医经典知识检索与理解助手</title>
+    <title>伤寒论问答助手</title>
     <style>
+        :root {
+            --bg: #f8f6f3;
+            --surface: #ffffff;
+            --surface-hover: #f0ede8;
+            --border: #e0dad2;
+            --text: #2c2620;
+            --text-secondary: #6b6358;
+            --text-muted: #9e9588;
+            --primary: #3d6b5c;
+            --primary-light: #5d8b7c;
+            --primary-dark: #2d5448;
+            --accent: #b8860b;
+            --accent-light: #d4a017;
+            --error: #c0392b;
+            --success: #27ae60;
+            --shadow: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-lg: 0 4px 12px rgba(0,0,0,0.1);
+            --radius: 10px;
+            --radius-sm: 6px;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-            background: #f5f5f5;
-            color: #333;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+            background: var(--bg);
+            color: var(--text);
             height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
+
+        /* ── Header ── */
         header {
-            background: #2c3e50;
-            color: white;
-            padding: 12px 24px;
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 20px;
             display: flex;
             align-items: center;
             justify-content: space-between;
+            min-height: 52px;
+            z-index: 10;
         }
-        header h1 { font-size: 18px; font-weight: 500; }
-        header .status { font-size: 13px; opacity: 0.8; }
+        header .brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        header .brand .icon { font-size: 22px; }
+        header .brand h1 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text);
+        }
+        header .brand .version {
+            font-size: 11px;
+            color: var(--text-muted);
+            background: var(--surface-hover);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        header .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        header .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+        header .status-dot.offline { background: var(--error); animation: none; }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* ── Layout ── */
+        .layout {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ── Sidebar ── */
+        aside {
+            width: 260px;
+            background: var(--surface);
+            border-right: 1px solid var(--border);
+            padding: 16px;
+            overflow-y: auto;
+            flex-shrink: 0;
+            transition: transform 0.3s ease;
+        }
+        aside .section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+            margin-top: 20px;
+        }
+        aside .section-title:first-child { margin-top: 0; }
+
+        /* KG Stats */
+        .kg-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .kg-stat-card {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 10px;
+            text-align: center;
+        }
+        .kg-stat-card .value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        .kg-stat-card .label {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+
+        /* Example questions */
+        .example-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .example-item {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text-secondary);
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .example-item:hover {
+            background: var(--surface-hover);
+            border-color: var(--primary-light);
+            color: var(--text);
+        }
+        .example-item .tag {
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 3px;
+            background: var(--primary);
+            color: white;
+            white-space: nowrap;
+        }
+        .example-item .tag.formula { background: #8e44ad; }
+        .example-item .tag.herb { background: #e67e22; }
+        .example-item .tag.compare { background: #2980b9; }
+        .example-item .tag.semantic { background: #c0392b; }
+        .example-item .tag.clause { background: #27ae60; }
+
+        /* ── Chat area ── */
+        main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            max-width: 820px;
+            margin: 0 auto;
+            width: 100%;
+        }
         #chat-container {
             flex: 1;
             overflow-y: auto;
-            padding: 20px;
-            max-width: 800px;
-            width: 100%;
-            margin: 0 auto;
+            padding: 20px 24px;
+            scroll-behavior: smooth;
         }
+        #chat-container::-webkit-scrollbar { width: 6px; }
+        #chat-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
         .message {
-            margin-bottom: 16px;
-            max-width: 80%;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
         }
         .message.user {
-            margin-left: auto;
+            flex-direction: row-reverse;
         }
-        .message .bubble {
-            padding: 12px 16px;
-            border-radius: 12px;
-            font-size: 14px;
-            line-height: 1.6;
+        .message .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            flex-shrink: 0;
         }
-        .message.user .bubble {
-            background: #2c3e50;
+        .message.assistant .avatar {
+            background: var(--primary);
             color: white;
         }
+        .message.user .avatar {
+            background: var(--surface-hover);
+            color: var(--text-secondary);
+        }
+        .message .content {
+            max-width: 75%;
+        }
+        .message.user .content {
+            text-align: right;
+        }
+        .message .bubble {
+            display: inline-block;
+            padding: 10px 14px;
+            border-radius: var(--radius);
+            font-size: 14px;
+            line-height: 1.7;
+            text-align: left;
+            word-break: break-word;
+        }
+        .message.user .bubble {
+            background: var(--primary);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
         .message.assistant .bubble {
-            background: white;
-            border: 1px solid #e0e0e0;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 4px;
+            box-shadow: var(--shadow);
         }
-        .retrieved-section {
+
+        /* Markdown in bubble */
+        .bubble h1, .bubble h2, .bubble h3 {
+            margin: 8px 0 4px;
+            font-weight: 600;
+        }
+        .bubble h1 { font-size: 16px; }
+        .bubble h2 { font-size: 15px; }
+        .bubble h3 { font-size: 14px; }
+        .bubble p { margin: 4px 0; }
+        .bubble ul, .bubble ol { margin: 4px 0 4px 20px; }
+        .bubble li { margin: 2px 0; }
+        .bubble strong { font-weight: 600; }
+        .bubble code {
+            background: var(--bg);
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 13px;
+            font-family: "Cascadia Code", "Fira Code", monospace;
+        }
+        .bubble .hr {
+            border-top: 1px solid var(--border);
+            margin: 8px 0;
+        }
+
+        /* Route badge */
+        .route-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            padding: 2px 8px;
+            border-radius: 10px;
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        .route-badge.clause { background: #e8f5e9; color: #2e7d32; }
+        .route-badge.formula { background: #f3e5f5; color: #7b1fa2; }
+        .route-badge.herb { background: #fff3e0; color: #e65100; }
+        .route-badge.compare { background: #e3f2fd; color: #1565c0; }
+        .route-badge.semantic { background: #ffebee; color: #c62828; }
+
+        /* Context extras panel */
+        .context-panel {
             margin-top: 8px;
-            font-size: 12px;
-            color: #888;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
         }
-        .retrieved-section summary {
+        .context-panel summary {
+            padding: 6px 10px;
+            font-size: 12px;
+            color: var(--text-muted);
             cursor: pointer;
+            background: var(--bg);
             user-select: none;
         }
-        .retrieved-section .doc-item {
-            margin: 4px 0;
-            padding: 6px 10px;
-            background: #f9f9f9;
-            border-radius: 6px;
-            border-left: 3px solid #3498db;
+        .context-panel summary:hover { background: var(--surface-hover); }
+        .context-panel .context-body {
+            padding: 8px 10px;
+            font-size: 12px;
+            color: var(--text-secondary);
+            line-height: 1.6;
         }
-        .retrieved-section .doc-id { color: #3498db; font-weight: 500; }
+        .context-panel .context-body .ctx-title {
+            font-weight: 600;
+            color: var(--primary);
+            margin-bottom: 4px;
+        }
+        .context-panel .context-body .ctx-item {
+            margin: 2px 0;
+        }
+
+        /* Retrieved docs */
+        .retrieved-panel {
+            margin-top: 8px;
+        }
+        .retrieved-panel summary {
+            padding: 6px 10px;
+            font-size: 12px;
+            color: var(--text-muted);
+            cursor: pointer;
+            background: var(--bg);
+            border-radius: var(--radius-sm);
+            user-select: none;
+        }
+        .retrieved-panel summary:hover { background: var(--surface-hover); }
+        .retrieved-panel .doc-list {
+            margin-top: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .retrieved-panel .doc-item {
+            padding: 8px 10px;
+            background: var(--bg);
+            border-radius: var(--radius-sm);
+            border-left: 3px solid var(--primary);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .retrieved-panel .doc-item .doc-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-bottom: 2px;
+        }
+        .retrieved-panel .doc-item .doc-id {
+            color: var(--primary);
+            font-weight: 600;
+        }
+
+        /* Latency footer */
+        .latency-footer {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            text-align: right;
+        }
+
+        /* Typing indicator */
+        .typing {
+            display: inline-flex;
+            gap: 4px;
+            padding: 4px 0;
+        }
+        .typing span {
+            width: 6px;
+            height: 6px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            animation: typing 1.4s infinite;
+        }
+        .typing span:nth-child(2) { animation-delay: 0.2s; }
+        .typing span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+            30% { transform: translateY(-4px); opacity: 1; }
+        }
+
+        /* ── Input ── */
         #input-container {
-            padding: 16px 20px;
-            background: white;
-            border-top: 1px solid #e0e0e0;
+            padding: 12px 24px 16px;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
         }
         #input-form {
             display: flex;
             gap: 10px;
-            max-width: 800px;
+            max-width: 820px;
             margin: 0 auto;
         }
         #question-input {
             flex: 1;
             padding: 10px 14px;
-            border: 1px solid #ddd;
-            border-radius: 8px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
             font-size: 14px;
             outline: none;
+            transition: border-color 0.15s;
+            background: var(--bg);
+            color: var(--text);
         }
-        #question-input:focus { border-color: #3498db; }
+        #question-input:focus {
+            border-color: var(--primary);
+            background: var(--surface);
+        }
+        #question-input::placeholder { color: var(--text-muted); }
         #submit-btn {
             padding: 10px 20px;
-            background: #3498db;
+            background: var(--primary);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: var(--radius);
             cursor: pointer;
             font-size: 14px;
+            font-weight: 500;
+            transition: background 0.15s;
         }
-        #submit-btn:hover { background: #2980b9; }
-        #submit-btn:disabled { background: #bdc3c7; cursor: not-allowed; }
-        .typing-indicator {
-            display: inline-block;
-            width: 6px;
-            height: 6px;
-            background: #999;
+        #submit-btn:hover { background: var(--primary-dark); }
+        #submit-btn:disabled {
+            background: var(--border);
+            cursor: not-allowed;
+        }
+
+        /* Error message */
+        .error-bubble {
+            background: #fef2f2 !important;
+            border-color: #fecaca !important;
+            color: var(--error) !important;
+        }
+
+        /* Mobile sidebar toggle */
+        .sidebar-toggle {
+            display: none;
+            position: fixed;
+            bottom: 80px;
+            left: 16px;
+            z-index: 20;
+            width: 40px;
+            height: 40px;
             border-radius: 50%;
-            animation: blink 1s infinite;
+            background: var(--primary);
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 18px;
+            box-shadow: var(--shadow-lg);
         }
-        @keyframes blink {
-            0%, 100% { opacity: 0; }
-            50% { opacity: 1; }
+
+        @media (max-width: 768px) {
+            aside {
+                position: fixed;
+                left: 0;
+                top: 52px;
+                bottom: 0;
+                z-index: 15;
+                transform: translateX(-100%);
+                box-shadow: var(--shadow-lg);
+            }
+            aside.open { transform: translateX(0); }
+            .sidebar-toggle { display: flex; align-items: center; justify-content: center; }
+            .message .content { max-width: 85%; }
+            main { padding: 0; }
+            #chat-container { padding: 16px; }
+        }
+
+        /* Initial suggestion */
+        .welcome-card {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-secondary);
+        }
+        .welcome-card .icon { font-size: 48px; margin-bottom: 12px; }
+        .welcome-card h2 { font-size: 18px; margin-bottom: 8px; color: var(--text); }
+        .welcome-card p { font-size: 14px; margin-bottom: 16px; }
+        .welcome-card .suggestions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            justify-content: center;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+        .welcome-card .suggestion-btn {
+            padding: 8px 14px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .welcome-card .suggestion-btn:hover {
+            border-color: var(--primary);
+            color: var(--primary);
         }
     </style>
 </head>
 <body>
     <header>
-        <h1>🌿 中医经典知识检索与理解助手</h1>
-        <span class="status" id="status">连接中...</span>
-    </header>
-    <div id="chat-container">
-        <div class="message assistant">
-            <div class="bubble">你好！我可以帮你检索和理解《伤寒论》的经典原文。试着问我"桂枝汤的组成是什么？"或"什么是太阳病？"</div>
+        <div class="brand">
+            <span class="icon">🌿</span>
+            <h1>伤寒论问答助手</h1>
+            <span class="version">P2.1</span>
         </div>
+        <div class="status-bar">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">连接中...</span>
+        </div>
+    </header>
+
+    <div class="layout">
+        <aside id="sidebar">
+            <div class="section-title">知识图谱</div>
+            <div class="kg-stats" id="kg-stats">
+                <div class="kg-stat-card"><div class="value">-</div><div class="label">节点</div></div>
+                <div class="kg-stat-card"><div class="value">-</div><div class="label">边</div></div>
+            </div>
+
+            <div class="section-title">示例问题</div>
+            <div class="example-list" id="example-list"></div>
+        </aside>
+
+        <main>
+            <div id="chat-container">
+                <div class="welcome-card" id="welcome">
+                    <div class="icon">📜</div>
+                    <h2>伤寒论经典知识检索</h2>
+                    <p>基于 LoRA 微调 + GraphRAG，检索和理解《伤寒论》条文</p>
+                    <div class="suggestions" id="welcome-suggestions"></div>
+                </div>
+            </div>
+
+            <div id="input-container">
+                <form id="input-form">
+                    <input type="text" id="question-input" placeholder="输入问题，如：桂枝汤的组成是什么？" autocomplete="off" autofocus>
+                    <button type="submit" id="submit-btn">发送</button>
+                </form>
+            </div>
+        </main>
     </div>
-    <div id="input-container">
-        <form id="input-form">
-            <input type="text" id="question-input" placeholder="输入你的问题..." autocomplete="off" autofocus>
-            <button type="submit" id="submit-btn">发送</button>
-        </form>
-    </div>
+
+    <button class="sidebar-toggle" id="sidebar-toggle" title="知识图谱">☰</button>
+
     <script>
+        // ── DOM refs ──
         const chatContainer = document.getElementById('chat-container');
         const inputForm = document.getElementById('input-form');
         const questionInput = document.getElementById('question-input');
         const submitBtn = document.getElementById('submit-btn');
-        const statusEl = document.getElementById('status');
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const kgStats = document.getElementById('kg-stats');
+        const exampleList = document.getElementById('example-list');
+        const welcomeSuggestions = document.getElementById('welcome-suggestions');
+        const welcome = document.getElementById('welcome');
+        const sidebarToggle = document.getElementById('sidebar-toggle');
+        const sidebar = document.getElementById('sidebar');
 
-        // 健康检查
-        fetch('/api/health').then(r => r.json()).then(data => {
-            statusEl.textContent = `向量库: ${data.vector_store_count} 条 | 模型: ${data.model}`;
-        }).catch(() => {
-            statusEl.textContent = '连接失败';
-        });
+        // ── Mobile sidebar ──
+        sidebarToggle.addEventListener('click', () => sidebar.classList.toggle('open'));
 
-        inputForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const question = questionInput.value.trim();
-            if (!question) return;
-
-            // 显示用户消息
-            const userMsg = document.createElement('div');
-            userMsg.className = 'message user';
-            userMsg.innerHTML = `<div class="bubble">${escapeHtml(question)}</div>`;
-            chatContainer.appendChild(userMsg);
-
-            questionInput.value = '';
-            submitBtn.disabled = true;
-
-            // 创建助手消息容器
-            const assistantMsg = document.createElement('div');
-            assistantMsg.className = 'message assistant';
-            const bubble = document.createElement('div');
-            bubble.className = 'bubble';
-            bubble.innerHTML = '<span class="typing-indicator"></span> 检索中...';
-            assistantMsg.appendChild(bubble);
-            chatContainer.appendChild(assistantMsg);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-
-            // SSE 请求
-            const response = await fetch('/api/chat', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ question }),
+        // ── Health check ──
+        fetch('/api/health')
+            .then(r => r.json())
+            .then(data => {
+                statusText.textContent = `${data.model || 'model'}`;
+                statusDot.classList.remove('offline');
+                if (data.graph_stats) {
+                    kgStats.innerHTML = `
+                        <div class="kg-stat-card"><div class="value">${data.graph_stats.nodes}</div><div class="label">节点</div></div>
+                        <div class="kg-stat-card"><div class="value">${data.graph_stats.edges}</div><div class="label">关系</div></div>
+                        <div class="kg-stat-card"><div class="value">${data.graph_stats.formulas}</div><div class="label">方剂</div></div>
+                        <div class="kg-stat-card"><div class="value">${data.graph_stats.herbs}</div><div class="label">药材</div></div>
+                    `;
+                }
+            })
+            .catch(() => {
+                statusText.textContent = '离线';
+                statusDot.classList.add('offline');
             });
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let answerText = '';
-            let retrievedSection = null;
-            let buffer = '';
+        // ── Load examples ──
+        fetch('/api/examples')
+            .then(r => r.json())
+            .then(data => {
+                const tagClass = {
+                    '条文检索': 'clause', '方剂查询': 'formula',
+                    '药材关联': 'herb', '方剂对比': 'compare', '经典解释': 'semantic'
+                };
+                data.examples.forEach(ex => {
+                    // sidebar list
+                    const item = document.createElement('div');
+                    item.className = 'example-item';
+                    const tag = tagClass[ex.category] || 'clause';
+                    item.innerHTML = `<span class="tag ${tag}">${ex.category}</span><span>${ex.question}</span>`;
+                    item.addEventListener('click', () => {
+                        questionInput.value = ex.question;
+                        inputForm.dispatchEvent(new Event('submit'));
+                    });
+                    exampleList.appendChild(item);
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (!line.startsWith('data: ')) continue;
-                    const data = JSON.parse(line.slice(6));
-
-                    if (data.type === 'retrieved') {
-                        retrievedSection = document.createElement('details');
-                        retrievedSection.className = 'retrieved-section';
-                        const summary = document.createElement('summary');
-                        summary.textContent = `检索到 ${data.docs.length} 条相关原文`;
-                        retrievedSection.appendChild(summary);
-                        for (const doc of data.docs) {
-                            const item = document.createElement('div');
-                            item.className = 'doc-item';
-                            item.innerHTML = `<span class="doc-id">第${doc.clause_id}条</span> · ${doc.chapter} · score=${doc.score}<br>${escapeHtml(doc.text.substring(0, 80))}...`;
-                            retrievedSection.appendChild(item);
-                        }
-                        bubble.innerHTML = '<span class="typing-indicator"></span> 生成中...';
-                    } else if (data.type === 'chunk') {
-                        answerText += data.content;
-                        bubble.textContent = answerText;
-                    } else if (data.type === 'done') {
-                        bubble.textContent = answerText || '（无回答）';
-                        if (retrievedSection) {
-                            assistantMsg.appendChild(retrievedSection);
-                        }
+                    // welcome suggestions (first 4)
+                    if (welcomeSuggestions.children.length < 4) {
+                        const btn = document.createElement('div');
+                        btn.className = 'suggestion-btn';
+                        btn.textContent = ex.question;
+                        btn.addEventListener('click', () => {
+                            questionInput.value = ex.question;
+                            inputForm.dispatchEvent(new Event('submit'));
+                        });
+                        welcomeSuggestions.appendChild(btn);
                     }
+                });
+            });
+
+        // ── Markdown renderer (minimal) ──
+        function renderMarkdown(text) {
+            // Escape HTML
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Code blocks
+            html = html.replace(/```([\s\S]*?)```/g, (m, c) => `<pre><code>${c.trim()}</code></pre>`);
+            // Inline code
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+            // Headers
+            html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+            html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+            html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+            // Bold
+            html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            // Horizontal rule
+            html = html.replace(/^---$/gm, '<div class="hr"></div>');
+            // Lists
+            html = html.replace(/^(\d+)\. (.+)$/gm, '<li>$2</li>');
+            html = html.replace(/^[-*] (.+)$/gm, '<li>$1</li>');
+            // Wrap consecutive <li> in <ul>
+            html = html.replace(/(<li>.*?<\/li>(\n<li>.*?<\/li>)*)/gs, '<ul>$1</ul>');
+            // Line breaks (double newline = paragraph)
+            html = html.replace(/\n\n/g, '</p><p>');
+            html = '<p>' + html + '</p>';
+            // Clean up empty paragraphs
+            html = html.replace(/<p>\s*<\/p>/g, '');
+            // Don't wrap block elements in <p>
+            html = html.replace(/<p>(<(h[123]|ul|pre|div))/g, '$1');
+            html = html.replace(/(<\/(h[123]|ul|pre|div)>)<\/p>/g, '$1');
+            return html;
+        }
+
+        // ── Route badge ──
+        function routeBadge(routeType) {
+            const labels = {
+                'clause_id': { label: '条文检索', class: 'clause' },
+                'formula': { label: '方剂查询', class: 'formula' },
+                'herb': { label: '药材关联', class: 'herb' },
+                'comparison': { label: '方剂对比', class: 'compare' },
+                'semantic': { label: '经典解释', class: 'semantic' },
+            };
+            const info = labels[routeType];
+            if (!info) return '';
+            return `<div class="route-badge ${info.class}">${info.label}</div>`;
+        }
+
+        // ── Context extras renderer ──
+        function renderContextExtras(extras) {
+            if (!extras) return '';
+            let body = '';
+            for (const [key, val] of Object.entries(extras)) {
+                if (key === 'concept') {
+                    body += `<div class="ctx-title">概念映射: ${val.concept}</div>`;
+                    body += `<div class="ctx-item">${val.brief}</div>`;
+                    if (val.related_formulas && val.related_formulas.length) {
+                        body += `<div class="ctx-item">相关方剂: ${val.related_formulas.join('、')}</div>`;
+                    }
+                } else if (key === 'formula_info') {
+                    body += `<div class="ctx-title">方剂: ${val.name}</div>`;
+                    body += `<div class="ctx-item">组成: ${val.herbs ? val.herbs.join('、') : '-'}</div>`;
+                    if (val.syndrome) body += `<div class="ctx-item">主治: ${val.syndrome}</div>`;
+                    if (val.efficacy) body += `<div class="ctx-item">功效: ${val.efficacy}</div>`;
+                } else if (key === 'herb_query') {
+                    body += `<div class="ctx-title">药材查询: ${val.herbs.join('、')}</div>`;
+                    body += `<div class="ctx-item">含此药材的方剂共 ${val.formula_count} 首: ${val.formula_names ? val.formula_names.join('、') : '-'}</div>`;
+                } else if (key === 'comparison') {
+                    body += `<div class="ctx-title">方剂对比</div>`;
+                    body += `<div class="ctx-item">${val.name1 || val.get('name1', '?')} vs ${val.name2 || val.get('name2', '?')}</div>`;
+                    if (val.common_herbs) body += `<div class="ctx-item">共有药材: ${val.common_herbs.join('、')}</div>`;
+                    if (val.herbs_only_in_1) body += `<div class="ctx-item">${val.name1}独有: ${val.herbs_only_in_1.join('、')}</div>`;
+                    if (val.herbs_only_in_2) body += `<div class="ctx-item">${val.name2}独有: ${val.herbs_only_in_2.join('、')}</div>`;
+                } else if (key === 'graph_syndrome') {
+                    body += `<div class="ctx-title">证候: ${val.syndrome}</div>`;
+                    body += `<div class="ctx-item">相关方剂: ${val.formulas ? val.formulas.join('、') : '-'}</div>`;
                 }
             }
+            if (!body) return '';
+            return `<details class="context-panel"><summary>结构化上下文</summary><div class="context-body">${body}</div></details>`;
+        }
 
-            chatContainer.scrollTop = chatContainer.scrollHeight;
-            submitBtn.disabled = false;
-            questionInput.focus();
-        });
+        // ── Retrieved docs renderer ──
+        function renderRetrieved(docs) {
+            if (!docs || !docs.length) return '';
+            let items = '';
+            for (const doc of docs.slice(0, 5)) {
+                items += `
+                    <div class="doc-item">
+                        <div class="doc-header">
+                            <span class="doc-id">第${doc.clause_id}条</span>
+                            <span>${doc.chapter || ''} · score=${doc.score || '-'}</span>
+                        </div>
+                        ${escapeHtml(doc.text.substring(0, 120))}${doc.text.length > 120 ? '...' : ''}
+                    </div>`;
+            }
+            return `<details class="retrieved-panel"><summary>检索到 ${docs.length} 条相关原文</summary><div class="doc-list">${items}</div></details>`;
+        }
 
+        // ── Escape HTML ──
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
         }
+
+        // ── Send message ──
+        inputForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const question = questionInput.value.trim();
+            if (!question || submitBtn.disabled) return;
+
+            // Hide welcome
+            if (welcome) welcome.style.display = 'none';
+
+            // User message
+            const userMsg = document.createElement('div');
+            userMsg.className = 'message user';
+            userMsg.innerHTML = `<div class="avatar">你</div><div class="content"><div class="bubble">${escapeHtml(question)}</div></div>`;
+            chatContainer.appendChild(userMsg);
+
+            questionInput.value = '';
+            submitBtn.disabled = true;
+
+            // Assistant message container
+            const assistantMsg = document.createElement('div');
+            assistantMsg.className = 'message assistant';
+            assistantMsg.innerHTML = `<div class="avatar">🌿</div><div class="content"><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div></div>`;
+            chatContainer.appendChild(assistantMsg);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+            const bubble = assistantMsg.querySelector('.bubble');
+            const content = assistantMsg.querySelector('.content');
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question }),
+                });
+
+                if (!response.ok) {
+                    const err = await response.json().catch(() => ({ detail: '请求失败' }));
+                    bubble.className = 'bubble error-bubble';
+                    bubble.textContent = err.detail || '请求失败';
+                    return;
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let answerText = '';
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
+
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        let data;
+                        try { data = JSON.parse(line.slice(6)); } catch { continue; }
+
+                        if (data.type === 'retrieved') {
+                            // Route badge
+                            if (data.route_type) {
+                                bubble.innerHTML = routeBadge(data.route_type) + '<div class="typing"><span></span><span></span><span></span></div>';
+                            }
+                            // Store for later
+                            bubble._retrieved = data.docs;
+                            bubble._route = data.route_type;
+                            bubble._extras = data.context_extras;
+                        } else if (data.type === 'chunk') {
+                            answerText += data.content;
+                            bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '') + renderMarkdown(answerText);
+                        } else if (data.type === 'done') {
+                            if (!answerText) {
+                                bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '') + '<em>（无回答）</em>';
+                            }
+                            // Append context extras
+                            if (bubble._extras) {
+                                const ctxHtml = renderContextExtras(bubble._extras);
+                                if (ctxHtml) content.insertAdjacentHTML('beforeend', ctxHtml);
+                            }
+                            // Append retrieved docs
+                            if (bubble._retrieved) {
+                                const docsHtml = renderRetrieved(bubble._retrieved);
+                                if (docsHtml) content.insertAdjacentHTML('beforeend', docsHtml);
+                            }
+                            // Latency
+                            if (data.latency) {
+                                content.insertAdjacentHTML('beforeend', `<div class="latency-footer">${data.latency}s</div>`);
+                            }
+                        } else if (data.type === 'error') {
+                            bubble.className = 'bubble error-bubble';
+                            bubble.textContent = data.message || '生成失败';
+                        }
+                    }
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+            } catch (err) {
+                bubble.className = 'bubble error-bubble';
+                bubble.textContent = '连接失败，请确认服务已启动';
+            } finally {
+                submitBtn.disabled = false;
+                questionInput.focus();
+                chatContainer.scrollTop = chatContainer.scrollHeight;
+            }
+        });
+
+        // Enter to send
+        questionInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                inputForm.dispatchEvent(new Event('submit'));
+            }
+        });
     </script>
 </body>
 </html>

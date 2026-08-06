@@ -6,6 +6,7 @@ P2.1: 支持从 ConceptMapper/GraphRAG 传入结构化上下文。
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Iterator
 
 import requests
@@ -132,7 +133,7 @@ class Generator:
         answer = gen.generate("桂枝汤的组成", docs, context_extras={...})
     """
 
-    OLLAMA_HOST = "http://localhost:11434"
+    OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
     def __init__(self, model: str = "qwen25-15b-tcm") -> None:
         self._model = model

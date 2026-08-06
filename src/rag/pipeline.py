@@ -106,12 +106,19 @@ class RAGPipeline:
         question: str,
         temperature: float = 0.7,
         max_tokens: int = 512,
-    ) -> tuple[list[RetrievalResult], Iterator[str]]:
-        """流式 RAG 查询：先检索，再流式生成"""
+    ) -> tuple[list[RetrievalResult], Iterator[str], str, dict[str, Any] | None]:
+        """流式 RAG 查询：先检索，再流式生成
+
+        Returns:
+            (docs, stream, route_type, context_extras)
+        """
         docs = self.retrieve(question)
 
+        route_type = ""
         context_extras: dict[str, Any] | None = None
         if self._hybrid_retriever:
+            if self._hybrid_retriever.last_route:
+                route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
         stream = self._generator.stream_generate(
@@ -120,7 +127,7 @@ class RAGPipeline:
             max_tokens=max_tokens,
             context_extras=context_extras,
         )
-        return docs, stream
+        return docs, stream, route_type, context_extras
 
     @property
     def retriever(self):

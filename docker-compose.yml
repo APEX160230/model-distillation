@@ -1,0 +1,59 @@
+# 中医经典知识检索与理解助手 — Docker Compose
+# 用法: docker-compose up -d
+#
+# 需要:
+#   1. Ollama 已安装微调模型 qwen25-15b-tcm (GGUF Q4_K_M)
+#   2. ChromaDB 向量库已初始化 (data/chroma/)
+#
+# 2核4G 服务器约束:
+#   - Ollama ~1.2GB (Q4 量化)
+#   - ChromaDB + sentence-transformers ~0.8GB
+#   - FastAPI + NetworkX ~0.2GB
+#   - 总计 ~2.2GB，余量 ~1.8GB
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: tcm-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    # 2核4G 约束: 限制内存
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: unless-stopped
+
+  app:
+    build: .
+    container_name: tcm-app
+    ports:
+      - "8000:8000"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - MODEL=qwen25-15b-tcm
+      - USE_HYBRID=true
+    volumes:
+      - chroma-data:/app/data/chroma
+    depends_on:
+      - ollama
+    # 等待 Ollama 就绪
+    command: >
+      bash -c "
+        echo 'Waiting for Ollama...' &&
+        sleep 5 &&
+        python -c 'import requests; requests.get(\"http://ollama:11434/api/tags\")' &&
+        echo 'Ollama ready!' &&
+        python -m src.serve.main
+      "
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: unless-stopped
+
+volumes:
+  ollama-models:
+  chroma-data:
