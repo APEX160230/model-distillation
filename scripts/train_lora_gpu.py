@@ -32,27 +32,30 @@ os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 _LOCAL_MODEL = Path("models/qwen25-15b-base")
 MODEL_NAME = str(_LOCAL_MODEL) if _LOCAL_MODEL.exists() else "Qwen/Qwen2.5-1.5B-Instruct"
-DATA_PATH = "data/processed/sft_train_p1.jsonl"
+DATA_PATH = "data/processed/sft_train_final.jsonl"
+VAL_DATA_PATH = "data/processed/sft_val_final.jsonl"
 OUTPUT_DIR = "./output_lora"
 MERGED_DIR = "./output_merged"
-MAX_LENGTH = 384
+MAX_LENGTH = 1024  # PRD §4.3 要求，覆盖 95%+ 训练数据
 
-# QLoRA 配置
+# QLoRA 配置 (PRD §FR4 对齐)
 LORA_RANK = 8
-LORA_ALPHA = 16
+LORA_ALPHA = 32  # PRD 要求 32
 LORA_DROPOUT = 0.05
 TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]
 
-# 训练配置
+# 训练配置 (PRD §FR4 对齐)
 LEARNING_RATE = 2e-4
-NUM_EPOCHS = 2
+NUM_EPOCHS = 3  # PRD 要求 3 epochs
 BATCH_SIZE = 1
 GRAD_ACCUM = 8
-WARMUP_RATIO = 0.05
+WARMUP_RATIO = 0.03  # PRD 要求 0.03
 LOGGING_STEPS = 5
+EVAL_STEPS = 50  # 每 50 步评估一次验证集
 
 SYSTEM_PROMPT = (
     "你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。"
+    "请用口语化的讲解风格，像老师讲课一样回答问题。"
     "引用经典原文时标注条文编号。解释方剂时列出完整组成。"
     "不提供具体诊疗建议。"
 )
@@ -180,22 +183,37 @@ def main():
     dataset = load_sft_data(DATA_PATH)
     print(f"训练样本数: {len(dataset)}", flush=True)
 
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        raw = [json.loads(l) for l in f]
-    from collections import Counter
-    cats = Counter(r.get("category", "unknown") for r in raw)
-    print("类别分布:", flush=True)
-    for cat, cnt in cats.most_common():
-        print(f"  {cat}: {cnt} ({cnt/len(raw)*100:.1f}%)", flush=True)
+    # 加载验证集
+    val_dataset = None
+    if Path(VAL_DATA_PATH).exists():
+        val_dataset = load_sft_data(VAL_DATA_PATH)
+        print(f"验证样本数: {len(val_dataset)}", flush=True)
+    else:
+        print(f"WARNING: 验证集不存在: {VAL_DATA_PATH}", flush=True)
 
     print("\n预处理 (tokenize)...", flush=True)
     dataset = dataset.map(
         lambda x: format_to_ids(x, tokenizer),
         remove_columns=dataset.column_names,
-        desc="Tokenizing",
+        desc="Tokenizing train",
     )
     dataset = dataset.filter(lambda x: len(x["input_ids"]) > 10)
-    print(f"预处理后样本数: {len(dataset)}", flush=True)
+    print(f"预处理后训练样本数: {len(dataset)}", flush=True)
+
+    if val_dataset is not None:
+        val_dataset = val_dataset.map(
+            lambda x: format_to_ids(x, tokenizer),
+            remove_columns=val_dataset.column_names,
+            desc="Tokenizing val",
+        )
+        val_dataset = val_dataset.filter(lambda x: len(x["input_ids"]) > 10)
+        print(f"预处理后验证样本数: {len(val_dataset)}", flush=True)
+
+    # 长度分布统计
+    lengths = [len(x["input_ids"]) for x in dataset]
+    avg_len = sum(lengths) / len(lengths)
+    over_max = sum(1 for l in lengths if l >= MAX_LENGTH)
+    print(f"Token 长度: avg={avg_len:.0f}, max={max(lengths)}, >={MAX_LENGTH}: {over_max} ({over_max/len(lengths)*100:.1f}%)", flush=True)
 
     # 7. 训练
     print("\n[7/7] 开始 GPU 训练...", flush=True)
@@ -217,6 +235,8 @@ def main():
         save_strategy="steps",
         save_steps=50,
         save_total_limit=3,
+        evaluation_strategy="steps" if val_dataset else "no",
+        eval_steps=EVAL_STEPS if val_dataset else None,
         fp16=True,           # GPU 用 fp16
         optim="adamw_torch",
         lr_scheduler_type="cosine",
@@ -237,6 +257,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=dataset,
+        eval_dataset=val_dataset,
         data_collator=data_collator,
     )
 
@@ -250,11 +271,13 @@ def main():
                 return
             loss = logs.get("loss", "?")
             lr = logs.get("learning_rate", "?")
+            eval_loss = logs.get("eval_loss", "")
             step = state.global_step
             epoch = state.epoch
             pct = step / state.max_steps * 100 if state.max_steps else 0
             vram_free = torch.cuda.mem_get_info()[0] / 1024**3 if torch.cuda.is_available() else 0
-            line = f"[step {step}/{state.max_steps}] epoch={epoch:.2f} loss={loss} lr={lr} vram_free={vram_free:.1f}GB ({pct:.1f}%)"
+            eval_str = f" eval_loss={eval_loss}" if eval_loss else ""
+            line = f"[step {step}/{state.max_steps}] epoch={epoch:.2f} loss={loss}{eval_str} lr={lr} vram_free={vram_free:.1f}GB ({pct:.1f}%)"
             print(line, flush=True)
             with open(progress_file, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
@@ -308,10 +331,12 @@ def main():
         "lr": LEARNING_RATE,
         "max_length": MAX_LENGTH,
         "train_samples": len(dataset),
-        "final_loss": train_result.training_loss,
+        "val_samples": len(val_dataset) if val_dataset else 0,
+        "final_train_loss": train_result.training_loss,
         "train_time_seconds": round(train_time, 1),
         "train_time_minutes": round(train_time / 60, 1),
-        "category_distribution": dict(cats),
+        "system_prompt": SYSTEM_PROMPT,
+        "data_source": "PDF oral (sft_train_final.jsonl)",
         "device": f"GPU ({gpu_name})",
         "dtype": "float16 (compute) + nf4 (weights)",
         "gradient_checkpointing": True,

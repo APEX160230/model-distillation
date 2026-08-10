@@ -4,6 +4,9 @@ data/processed/*
 !data/processed/classics/
 !data/processed/p0_baseline_report.json
 !data/processed/sft_train_p1.jsonl
+!data/processed/sft_train_final.jsonl
+!data/processed/sft_val_final.jsonl
+!data/processed/sft_refine_report.json
 !data/processed/p1_lora_report.json
 !data/processed/p0_vs_p1_comparison.json
 !data/processed/p2_hybrid_report.json
