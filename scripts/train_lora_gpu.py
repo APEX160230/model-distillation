@@ -21,22 +21,33 @@ from transformers import (
     TrainingArguments,
     Trainer,
     DataCollatorForSeq2Seq,
-    BitsAndBytesConfig,
     TrainerCallback,
 )
-from peft import LoraConfig, get_peft_model, TaskType, prepare_model_for_kbit_training
+from peft import LoraConfig, get_peft_model, TaskType
+
+# bitsandbytes 可选（4-bit 量化），不可用时回退到 fp16
+try:
+    from transformers import BitsAndBytesConfig
+    from peft import prepare_model_for_kbit_training
+    import bitsandbytes as bnb
+    USE_4BIT = True
+    print("bitsandbytes 可用，使用 4-bit QLoRA 模式")
+except ImportError:
+    USE_4BIT = False
+    print("bitsandbytes 不可用，使用 fp16 模式")
 
 # ==================== 配置 ====================
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # 防止显存碎片导致 OOM/TDR
 
 _LOCAL_MODEL = Path("models/qwen25-15b-base")
 MODEL_NAME = str(_LOCAL_MODEL) if _LOCAL_MODEL.exists() else "Qwen/Qwen2.5-1.5B-Instruct"
 DATA_PATH = "data/processed/sft_train_final.jsonl"
 VAL_DATA_PATH = "data/processed/sft_val_final.jsonl"
-OUTPUT_DIR = "./output_lora"
+OUTPUT_DIR = "./output_lora_v2"  # 新目录，避免旧 checkpoint 冲突
 MERGED_DIR = "./output_merged"
-MAX_LENGTH = 1024  # PRD §4.3 要求，覆盖 95%+ 训练数据
+MAX_LENGTH = 384  # 降低以防止 cross_entropy OOM（2.23GiB 分配失败）
 
 # QLoRA 配置 (PRD §FR4 对齐)
 LORA_RANK = 8
@@ -135,35 +146,55 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
     print(f"Tokenizer loaded. Vocab size: {tokenizer.vocab_size}", flush=True)
 
-    # 2. 配置 4-bit 量化
-    print("\n[2/7] 配置 4-bit 量化 (QLoRA)...", flush=True)
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-    )
+    # 2. 加载模型
+    if USE_4BIT:
+        print("\n[2/7] 配置 4-bit 量化 (QLoRA)...", flush=True)
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        print("\n[3/7] 加载模型 (4-bit)...", flush=True)
+        t0 = time.time()
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        model.config.use_cache = False
+        load_time = time.time() - t0
+        vram_after_load = torch.cuda.mem_get_info()[0] / 1024**3
+        print(f"模型加载完成: {load_time:.1f}s", flush=True)
+        print(f"VRAM 使用: {vram_total - vram_after_load:.2f}GB / {vram_total:.1f}GB", flush=True)
+        print(f"模型参数量: {model.num_parameters() / 1e6:.1f}M", flush=True)
 
-    # 3. 加载模型 (4-bit 量化)
-    print("\n[3/7] 加载模型 (4-bit)...", flush=True)
-    t0 = time.time()
-    model = AutoModelForCausalLM.from_pretrained(
-        MODEL_NAME,
-        quantization_config=bnb_config,
-        device_map="auto",
-        trust_remote_code=True,
-    )
-    model.config.use_cache = False
-    load_time = time.time() - t0
-    vram_after_load = torch.cuda.mem_get_info()[0] / 1024**3
-    print(f"模型加载完成: {load_time:.1f}s", flush=True)
-    print(f"VRAM 使用: {vram_total - vram_after_load:.2f}GB / {vram_total:.1f}GB", flush=True)
-    print(f"模型参数量: {model.num_parameters() / 1e6:.1f}M", flush=True)
+        # 4. 准备 k-bit 训练
+        print("\n[4/7] 准备 k-bit 训练...", flush=True)
+        model = prepare_model_for_kbit_training(model)
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    else:
+        print("\n[2/7] fp16 模式 (无 4-bit 量化)...", flush=True)
+        print("\n[3/7] 加载模型 (fp16)...", flush=True)
+        t0 = time.time()
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_NAME,
+            torch_dtype=torch.float16,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        model.config.use_cache = False
+        load_time = time.time() - t0
+        vram_after_load = torch.cuda.mem_get_info()[0] / 1024**3
+        print(f"模型加载完成: {load_time:.1f}s", flush=True)
+        print(f"VRAM 使用: {vram_total - vram_after_load:.2f}GB / {vram_total:.1f}GB", flush=True)
+        print(f"模型参数量: {model.num_parameters() / 1e6:.1f}M", flush=True)
 
-    # 4. 准备 k-bit 训练
-    print("\n[4/7] 准备 k-bit 训练...", flush=True)
-    model = prepare_model_for_kbit_training(model)
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        # 4. 准备训练
+        print("\n[4/7] 准备训练 (gradient checkpointing)...", flush=True)
+        model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+        model.enable_input_require_grads()
 
     # 5. 配置 LoRA
     print("\n[5/7] 配置 LoRA...", flush=True)
@@ -230,15 +261,15 @@ def main():
         per_device_train_batch_size=BATCH_SIZE,
         gradient_accumulation_steps=GRAD_ACCUM,
         learning_rate=LEARNING_RATE,
-        warmup_ratio=WARMUP_RATIO,
+        warmup_steps=int(WARMUP_RATIO * total_steps),  # transformers 5.x 用 warmup_steps 替代 warmup_ratio
         logging_steps=LOGGING_STEPS,
         save_strategy="steps",
-        save_steps=50,
-        save_total_limit=3,
-        evaluation_strategy="steps" if val_dataset else "no",
-        eval_steps=EVAL_STEPS if val_dataset else None,
+        save_steps=10,  # 频繁保存，崩溃最多损失 10 步
+        save_total_limit=5,
+        eval_strategy="no",  # 禁用训练中评估，防止 eval 时 OOM
         fp16=True,           # GPU 用 fp16
-        optim="adamw_torch",
+        optim="adamw_torch",  # 标准优化器（paged 版有 CPU-GPU 传输开销）
+        torch_empty_cache_steps=5,  # 定期清理显存碎片
         lr_scheduler_type="cosine",
         report_to="none",
         remove_unused_columns=False,
@@ -279,12 +310,18 @@ def main():
             eval_str = f" eval_loss={eval_loss}" if eval_loss else ""
             line = f"[step {step}/{state.max_steps}] epoch={epoch:.2f} loss={loss}{eval_str} lr={lr} vram_free={vram_free:.1f}GB ({pct:.1f}%)"
             print(line, flush=True)
-            with open(progress_file, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+            try:
+                with open(progress_file, "a", encoding="utf-8") as f:
+                    f.write(line + "\n")
+            except (PermissionError, OSError):
+                pass  # 文件被锁不影响训练
 
         def on_step_end(self, args, state, control, **kwargs):
-            with open(progress_file, "a", encoding="utf-8") as f:
-                f.write(f"heartbeat: step={state.global_step}/{state.max_steps} t={time.time():.0f}\n")
+            try:
+                with open(progress_file, "a", encoding="utf-8") as f:
+                    f.write(f"heartbeat: step={state.global_step}/{state.max_steps} t={time.time():.0f}\n")
+            except (PermissionError, OSError):
+                pass  # 文件被锁不影响训练
 
     trainer.add_callback(ProgressCallback())
 

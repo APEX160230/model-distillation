@@ -26,6 +26,7 @@ models/
 *.gguf
 outputs/
 output_lora/
+output_lora_v2/
 output_merged/
 llama.cpp/
 llama-win-cpu-x64.zip
