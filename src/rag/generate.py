@@ -28,6 +28,23 @@ SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲�
 4. 如果检索结果为空或与问题无关，如实说明"知识库中未收录相关内容"。
 5. 回答控制在 200-500 字，结构清晰，不要跑题。"""
 
+# 辨证模式 SYSTEM_PROMPT（PRD v3.0 §5 FR5 三层回答）
+DIAGNOSIS_SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。
+用户描述身体不适，请严格按照以下三层结构回答（每层用【】标出层名）：
+
+【辨证方向】只引用参考信息中的辨证结论，说明判定依据（哪些症状指向该方向）。
+如果参考信息中没有辨证结论，明说"我不太确定"，不要自行辨证。
+【类方思路】只引用参考信息中的类方思路标签，并注明"仅作中医知识参考，不构成用药建议"。
+严禁给出方剂组成、剂量或开具处方。
+【讲解与调理】引用参考信息中的经典原文（标注【第X条】），
+用倪海厦讲课的口吻解释这个方向；补充生活调理注意事项和就医引导。
+
+回答规则（必须严格遵守）：
+1. 参考信息中没有的内容不要编造，特别是：方剂组成、剂量、条文编号
+2. 不提供具体诊疗建议，不针对个人病情开方
+3. 若用户描述可能为急危重症（如剧痛、出血、昏迷），提醒及时就医
+4. 回答控制在 300-600 字，结构清晰，不要跑题。"""
+
 
 def format_retrieved_docs(docs: list[RetrievalResult]) -> str:
     """格式化检索结果为 prompt 上下文"""
@@ -112,6 +129,23 @@ def format_context_extras(extras: dict[str, Any] | None) -> str:
                 line += f"（主治{c.get('syndrome')}）"
             parts.append(line)
 
+    # 辨证结论（PRD v3.0 三层回答第一二层）
+    diagnosis = extras.get("diagnosis")
+    if diagnosis and diagnosis.get("status") == "diagnosed":
+        parts.append("【辨证结论】（系统判定，引用时必须原文照抄）")
+        syndrome = diagnosis.get("syndrome", "")
+        brief = diagnosis.get("brief", "")
+        if brief:
+            parts.append(f"证型方向：{syndrome}（{brief}）")
+        else:
+            parts.append(f"证型方向：{syndrome}")
+        evidence = diagnosis.get("evidence", [])
+        if evidence:
+            parts.append(f"判定依据：{'、'.join(evidence)}")
+        family = diagnosis.get("family")
+        if family:
+            parts.append(f"类方思路：传统多从「{family}」思路考虑（仅作知识参考，不构成用药建议）")
+
     # 超范围标记
     out_of_scope = extras.get("out_of_scope")
     if out_of_scope:
@@ -187,12 +221,17 @@ class Generator:
             safe_filter: 是否对回答做输出侧安全过滤（P0-4）
         """
         prompt = build_prompt(question, docs, context_extras)
+        system_prompt = (
+            DIAGNOSIS_SYSTEM_PROMPT
+            if context_extras and context_extras.get("diagnosis")
+            else SYSTEM_PROMPT
+        )
         response = requests.post(
             f"{self._host()}/api/chat",
             json={
                 "model": self._model,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 "stream": False,
@@ -236,12 +275,17 @@ class Generator:
             生成的文本片段（流式片段 + 可能的收尾修正片段）
         """
         prompt = build_prompt(question, docs, context_extras)
+        system_prompt = (
+            DIAGNOSIS_SYSTEM_PROMPT
+            if context_extras and context_extras.get("diagnosis")
+            else SYSTEM_PROMPT
+        )
         response = requests.post(
             f"{self._host()}/api/chat",
             json={
                 "model": self._model,
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt},
                 ],
                 "stream": True,

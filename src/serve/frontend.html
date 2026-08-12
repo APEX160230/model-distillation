@@ -361,6 +361,58 @@
             font-weight: 600;
         }
 
+        /* PRD v3.0 三层回答结构 */
+        .layer {
+            display: inline-block;
+            margin: 8px 0 2px;
+            padding: 2px 10px;
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+        }
+        .layer-diag { background: #0F6E56; }
+        .layer-family { background: #BA7517; }
+        .layer-guide { background: #185FA5; }
+
+        /* 辨证追问卡片（PRD v3.0 FR3） */
+        .diag-card {
+            margin-top: 8px;
+            padding: 12px 14px;
+            background: var(--bg);
+            border-radius: var(--radius-md, 10px);
+            border: 1px solid var(--border, #ddd);
+        }
+        .diag-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        .diag-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .diag-option {
+            padding: 8px 16px;
+            border: 1px solid var(--primary);
+            border-radius: 20px;
+            background: #fff;
+            color: var(--primary);
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        .diag-option:hover {
+            background: var(--primary);
+            color: #fff;
+        }
+        .diag-hint {
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
         /* Latency footer */
         .latency-footer {
             font-size: 11px;
@@ -610,7 +662,7 @@
             .then(r => r.json())
             .then(data => {
                 const tagClass = {
-                    '条文检索': 'clause', '方剂查询': 'formula',
+                    '辨证建议': 'diag', '条文检索': 'clause', '方剂查询': 'formula',
                     '药材关联': 'herb', '方剂对比': 'compare', '经典解释': 'semantic'
                 };
                 data.examples.forEach(ex => {
@@ -657,6 +709,15 @@
             html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
             // Bold
             html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+            // 三层回答结构（PRD v3.0）— 层标题卡片化
+            html = html.replace(/【(辨证方向|类方思路|讲解与调理)】/g, (m, p1) => {
+                const cls = {
+                    '辨证方向': 'layer layer-diag',
+                    '类方思路': 'layer layer-family',
+                    '讲解与调理': 'layer layer-guide',
+                }[p1] || 'layer';
+                return `<div class="${cls}">${p1}</div>`;
+            });
             // Horizontal rule
             html = html.replace(/^---$/gm, '<div class="hr"></div>');
             // Lists
@@ -683,10 +744,33 @@
                 'herb': { label: '药材关联', class: 'herb' },
                 'comparison': { label: '方剂对比', class: 'compare' },
                 'semantic': { label: '经典解释', class: 'semantic' },
+                'diagnosis_clarify': { label: '辨证追问', class: 'diag' },
+                'diagnosed': { label: '辨证建议', class: 'diag' },
             };
             const info = labels[routeType];
             if (!info) return '';
             return `<div class="route-badge ${info.class}">${info.label}</div>`;
+        }
+
+        // ── 辨证追问卡片（PRD v3.0 FR3） ──
+        function renderClarification(diag, originalQuestion) {
+            const opts = (diag.options || []).map(o =>
+                `<button class="diag-option" data-answer="${escapeHtml(o)}">${escapeHtml(o)}</button>`
+            ).join('');
+            const card = document.createElement('div');
+            card.className = 'diag-card';
+            card.innerHTML = `
+                <div class="diag-title">${escapeHtml(diag.question || '请补充一点信息')}</div>
+                <div class="diag-options">${opts}</div>
+                <div class="diag-hint">点击选项继续（最多追问 2 轮）</div>`;
+            card.querySelectorAll('.diag-option').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const followup = `${originalQuestion}，${btn.dataset.answer}`;
+                    questionInput.value = followup;
+                    inputForm.dispatchEvent(new Event('submit'));
+                });
+            });
+            return card;
         }
 
         // ── Context extras renderer ──
@@ -815,11 +899,33 @@
                             bubble._retrieved = data.docs;
                             bubble._route = data.route_type;
                             bubble._extras = data.context_extras;
+                            bubble._question = question;
+                            // PRD v3.0：辨证追问 → 渲染选择题卡片，不再展示流式内容
+                            const diag = (data.context_extras || {}).diagnosis;
+                            if (diag && diag.status === 'need_clarification') {
+                                bubble._clarify = true;
+                                bubble.innerHTML = (data.route_type ? routeBadge(data.route_type) : '') +
+                                    '<div class="typing"><span></span><span></span><span></span></div>';
+                                return;
+                            }
                         } else if (data.type === 'chunk') {
-                            answerText += data.content;
-                            bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '') + renderMarkdown(answerText);
+                            if (bubble._clarify) {
+                                // 追问场景：流式内容就是问题文本，直接替换为追问卡片
+                                bubble._clarify = false;
+                                bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '');
+                                const diag = (bubble._extras || {}).diagnosis;
+                                if (diag) {
+                                    bubble.appendChild(renderClarification(diag, bubble._question));
+                                }
+                                bubble._answerDone = true;
+                            } else {
+                                answerText += data.content;
+                                bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '') + renderMarkdown(answerText);
+                            }
                         } else if (data.type === 'done') {
-                            if (!answerText) {
+                            if (bubble._answerDone) {
+                                // 追问卡片已渲染，跳过
+                            } else if (!answerText) {
                                 bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '') + '<em>（无回答）</em>';
                             }
                             // Append context extras

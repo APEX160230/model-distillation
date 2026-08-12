@@ -34,6 +34,19 @@ class DiagnosisResult:
     options: list[str] = field(default_factory=list)
     reason: str | None = None  # 拒答原因
 
+    def to_dict(self) -> dict:
+        """结构化输出（供 pipeline 注入 context_extras / API 返回）"""
+        return {
+            "status": self.status,
+            "syndrome": self.syndrome,
+            "brief": self.syndrome_brief,
+            "family": self.family,
+            "evidence": self.evidence,
+            "question": self.question,
+            "options": self.options,
+            "reason": self.reason,
+        }
+
 
 class DiagnosisEngine:
     """辨证判定引擎"""

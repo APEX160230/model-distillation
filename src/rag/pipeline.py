@@ -17,6 +17,7 @@ from typing import Any, Iterator, Optional
 from src.rag.generate import Generator
 from src.rag.retrieve import RetrievalResult, VectorRetriever
 from src.rag.hybrid_retriever import HybridRetriever
+from src.rag.diagnosis import DiagnosisEngine
 
 # ── 安全护栏（P0-4）────────────────────────────────────────
 
@@ -106,6 +107,7 @@ class RAGPipeline:
 
         self._generator = generator or Generator(model=model)
         self._top_k = top_k
+        self._diagnosis = DiagnosisEngine()
 
     def retrieve(self, question: str) -> list[RetrievalResult]:
         """仅检索，不生成"""
@@ -136,6 +138,20 @@ class RAGPipeline:
                 context_extras={"rejection": rejection},
             )
 
+        # PRD v3.0 辨证分支：症状描述优先走辨证引擎（不依赖模型推理）
+        diagnosis_engine = getattr(self, "_diagnosis", None)
+        if diagnosis_engine:
+            diagnosis = diagnosis_engine.diagnose(question)
+            if diagnosis.status == "need_clarification":
+                # 证据不足 → 追问（前端选择题），不调用模型
+                return RAGResponse(
+                    answer=diagnosis.question,
+                    retrieved_docs=[],
+                    latency=round(time.time() - start, 2),
+                    route_type="diagnosis_clarify",
+                    context_extras={"diagnosis": diagnosis.to_dict()},
+                )
+
         docs = self.retrieve(question)
 
         # 获取路由类型和额外上下文（P2.1）
@@ -146,13 +162,19 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
+        # PRD v3.0：辨证成功 → 辨证结论注入上下文（三层生成）
+        if diagnosis_engine and diagnosis.status == "diagnosed":
+            if context_extras is None:
+                context_extras = {}
+            context_extras["diagnosis"] = diagnosis.to_dict()
+
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
             context_extras
             and any(
                 k in context_extras
                 for k in ("concept", "formula_info", "herb_query", "comparison",
-                          "graph_syndrome", "formula_compositions")
+                          "graph_syndrome", "formula_compositions", "diagnosis")
             )
         )
         if not docs:
@@ -211,6 +233,21 @@ class RAGPipeline:
                 yield rejection
             return [], _rejection_stream(), "rejected", {"rejection": rejection}
 
+        # PRD v3.0 辨证分支（流式）
+        diagnosis_engine = getattr(self, "_diagnosis", None)
+        diagnosis = None
+        if diagnosis_engine:
+            diagnosis = diagnosis_engine.diagnose(question)
+            if diagnosis.status == "need_clarification":
+                def _clarify_stream():
+                    yield diagnosis.question
+                return (
+                    [],
+                    _clarify_stream(),
+                    "diagnosis_clarify",
+                    {"diagnosis": diagnosis.to_dict()},
+                )
+
         docs = self.retrieve(question)
 
         route_type = ""
@@ -220,13 +257,19 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
+        # PRD v3.0：辨证成功 → 辨证结论注入上下文（三层生成）
+        if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
+            if context_extras is None:
+                context_extras = {}
+            context_extras["diagnosis"] = diagnosis.to_dict()
+
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
             context_extras
             and any(
                 k in context_extras
                 for k in ("concept", "formula_info", "herb_query", "comparison",
-                          "graph_syndrome", "formula_compositions")
+                          "graph_syndrome", "formula_compositions", "diagnosis")
             )
         )
         if not docs:

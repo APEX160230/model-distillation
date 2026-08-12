@@ -114,16 +114,15 @@ def create_app(pipeline) -> FastAPI:
         """返回示例问题列表"""
         return {
             "examples": [
-                {"category": "条文检索", "question": "第12条原文是什么？"},
-                {"category": "方剂查询", "question": "桂枝汤的组成是什么？"},
-                {"category": "药材关联", "question": "含有桂枝的方剂有哪些？"},
-                {"category": "方剂对比", "question": "桂枝汤和麻黄汤有什么区别？"},
-                {"category": "经典解释", "question": "什么是太阳病？"},
-                {"category": "经典解释", "question": "什么是阳明病？"},
-                {"category": "经典解释", "question": "什么是少阳病？"},
-                {"category": "药材关联", "question": "黄芩能治疗什么病？"},
-                {"category": "方剂查询", "question": "小柴胡汤主治什么证？"},
-                {"category": "经典解释", "question": "什么是太阳中风证？"},
+                {"category": "辨证建议", "question": "我这两天头痛，怕冷，不出汗"},
+                {"category": "辨证建议", "question": "发烧了，有出汗，怕风"},
+                {"category": "辨证建议", "question": "嘴里发苦，嗓子干，有点头晕"},
+                {"category": "辨证建议", "question": "拉肚子，肚子疼，手脚发凉"},
+                {"category": "辨证建议", "question": "这几天拉肚子，肚子胀，没胃口"},
+                {"category": "知识问答", "question": "桂枝汤的组成是什么？"},
+                {"category": "知识问答", "question": "什么是太阳病？"},
+                {"category": "知识问答", "question": "桂枝汤和麻黄汤有什么区别？"},
+                {"category": "知识问答", "question": "什么是太阳中风证？"},
             ]
         }
 
