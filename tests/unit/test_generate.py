@@ -1,4 +1,5 @@
 """生成模块测试"""
+import json
 from unittest.mock import patch, MagicMock
 import pytest
 
@@ -43,57 +44,72 @@ class TestBuildPrompt:
 
 
 class TestGenerator:
-    @patch("src.rag.generate.ollama.chat")
-    def test_generate_returns_string(self, mock_chat):
-        mock_chat.return_value = {"message": {"content": "这是回答"}}
+    """Generator 已改用 requests 调用 Ollama REST API，测试 mock requests.post"""
+
+    @staticmethod
+    def _mock_response(content: str | None = None, stream_chunks: list[dict] | None = None):
+        """构造 mock 的 requests.Response"""
+        resp = MagicMock()
+        if content is not None:
+            resp.json.return_value = {"message": {"content": content}}
+        if stream_chunks is not None:
+            resp.iter_lines.return_value = [
+                json.dumps(chunk, ensure_ascii=False).encode() for chunk in stream_chunks
+            ]
+        return resp
+
+    @patch("src.rag.generate.requests.post")
+    def test_generate_returns_string(self, mock_post):
+        mock_post.return_value = self._mock_response(content="这是回答")
         gen = Generator(model="test-model")
         result = gen.generate("问题", [_make_doc()])
         assert isinstance(result, str)
         assert result == "这是回答"
 
-    @patch("src.rag.generate.ollama.chat")
-    def test_generate_calls_ollama(self, mock_chat):
-        mock_chat.return_value = {"message": {"content": "回答"}}
+    @patch("src.rag.generate.requests.post")
+    def test_generate_calls_ollama(self, mock_post):
+        mock_post.return_value = self._mock_response(content="回答")
         gen = Generator(model="test-model")
         gen.generate("问题", [_make_doc()])
-        assert mock_chat.called
+        assert mock_post.called
+        assert mock_post.call_args.args[0].endswith("/api/chat")
 
-    @patch("src.rag.generate.ollama.chat")
-    def test_generate_passes_system_prompt(self, mock_chat):
-        mock_chat.return_value = {"message": {"content": "回答"}}
+    @patch("src.rag.generate.requests.post")
+    def test_generate_passes_system_prompt(self, mock_post):
+        mock_post.return_value = self._mock_response(content="回答")
         gen = Generator(model="test-model")
         gen.generate("问题", [_make_doc()])
-        call_args = mock_chat.call_args
-        messages = call_args.kwargs.get("messages", call_args.args[1] if len(call_args.args) > 1 else [])
+        payload = mock_post.call_args.kwargs["json"]
+        messages = payload["messages"]
         assert any(m["role"] == "system" for m in messages)
 
-    @patch("src.rag.generate.ollama.chat")
-    def test_generate_temperature(self, mock_chat):
-        mock_chat.return_value = {"message": {"content": "回答"}}
+    @patch("src.rag.generate.requests.post")
+    def test_generate_temperature(self, mock_post):
+        mock_post.return_value = self._mock_response(content="回答")
         gen = Generator(model="test-model")
         gen.generate("问题", [_make_doc()], temperature=0.1)
-        call_args = mock_chat.call_args
-        options = call_args.kwargs.get("options", {})
-        assert options.get("temperature") == 0.1
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["options"].get("temperature") == 0.1
 
-    @patch("src.rag.generate.ollama.chat")
-    def test_stream_generate_yields_chunks(self, mock_chat):
-        mock_chat.return_value = iter([
-            {"message": {"content": " chunk1"}},
-            {"message": {"content": " chunk2"}},
-            {"message": {"content": ""}},
-        ])
+    @patch("src.rag.generate.requests.post")
+    def test_stream_generate_yields_chunks(self, mock_post):
+        mock_post.return_value = self._mock_response(
+            stream_chunks=[
+                {"message": {"content": " chunk1"}},
+                {"message": {"content": " chunk2"}},
+                {"message": {"content": ""}},
+            ]
+        )
         gen = Generator(model="test-model")
         chunks = list(gen.stream_generate("问题", [_make_doc()]))
         assert "chunk1" in chunks[0]
         assert "chunk2" in chunks[1]
         assert len(chunks) == 2  # empty chunk filtered
 
-    @patch("src.rag.generate.ollama.chat")
-    def test_generate_max_tokens(self, mock_chat):
-        mock_chat.return_value = {"message": {"content": "回答"}}
+    @patch("src.rag.generate.requests.post")
+    def test_generate_max_tokens(self, mock_post):
+        mock_post.return_value = self._mock_response(content="回答")
         gen = Generator(model="test-model")
         gen.generate("问题", [_make_doc()], max_tokens=128)
-        call_args = mock_chat.call_args
-        options = call_args.kwargs.get("options", {})
-        assert options.get("num_predict") == 128
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["options"].get("num_predict") == 128

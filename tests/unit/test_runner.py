@@ -19,6 +19,8 @@ def _make_mock_pipeline():
             RetrievalResult(id="clause_1", text="太阳之为病", metadata={"clause_id": 1, "chapter": "test"}, distance=0.2),
         ],
         latency=1.5,
+        route_type="formula",
+        context_extras=None,
     )
     return pipeline
 

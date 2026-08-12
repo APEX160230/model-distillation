@@ -8,16 +8,24 @@ from src.rag.retrieve import RetrievalResult
 
 
 def _make_mock_pipeline():
-    """创建 mock pipeline"""
+    """创建 mock pipeline（对齐当前接口：stream_query 返回 4 元组）"""
     pipeline = MagicMock()
     pipeline.retriever.count.return_value = 330
+    pipeline._generator._model = "tcm-model"
+    pipeline.hybrid_retriever.graph_stats = {
+        "nodes": 269,
+        "edges": 518,
+        "formulas": 71,
+        "herbs": 62,
+        "syndromes": 71,
+    }
 
     docs = [
         RetrievalResult(id="clause_1", text="太阳之为病", metadata={"clause_id": 1, "chapter": "test"}, distance=0.2),
     ]
 
     def _stream(*args, **kwargs):
-        return docs, iter(["回答", "内容"])
+        return docs, iter(["回答", "内容"]), "formula", {"formula_info": {"name": "桂枝汤"}}
 
     pipeline.stream_query.side_effect = _stream
     return pipeline
@@ -36,8 +44,9 @@ class TestHealth:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
-        assert data["vector_store_count"] == 330
-        assert data["model"] == "qwen2.5:1.5b"
+        assert data["graph_stats"]["nodes"] == 269
+        assert data["graph_stats"]["formulas"] == 71
+        assert data["model"] == "tcm-model"
 
 
 class TestGraphStats:
@@ -45,9 +54,9 @@ class TestGraphStats:
         resp = client.get("/api/graph/stats")
         assert resp.status_code == 200
         data = resp.json()
-        assert "total_nodes" in data
-        assert "formula_count" in data
-        assert "herb_count" in data
+        assert "nodes" in data
+        assert "formulas" in data
+        assert "herbs" in data
 
 
 class TestChat:
@@ -60,7 +69,8 @@ class TestChat:
         assert "done" in body
 
     def test_empty_question_returns_400(self, client):
-        resp = client.post("/api/chat", json={"question": ""})
+        # 空串被 Pydantic min_length=1 拦截返回 422；纯空格经 strip 后由业务层返回 400
+        resp = client.post("/api/chat", json={"question": "   "})
         assert resp.status_code == 400
         assert "问题不能为空" in resp.json()["detail"]
 

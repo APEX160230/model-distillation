@@ -144,6 +144,10 @@ class Generator:
     def __init__(self, model: str = "tcm-model") -> None:
         self._model = model
 
+    def _host(self) -> str:
+        """运行时读取 OLLAMA_HOST（支持热更新，测试可 monkeypatch）"""
+        return os.environ.get("OLLAMA_HOST", self.OLLAMA_HOST)
+
     def generate(
         self,
         question: str,
@@ -166,7 +170,7 @@ class Generator:
         """
         prompt = build_prompt(question, docs, context_extras)
         response = requests.post(
-            f"{self.OLLAMA_HOST}/api/chat",
+            f"{self._host()}/api/chat",
             json={
                 "model": self._model,
                 "messages": [
@@ -206,7 +210,7 @@ class Generator:
         """
         prompt = build_prompt(question, docs, context_extras)
         response = requests.post(
-            f"{self.OLLAMA_HOST}/api/chat",
+            f"{self._host()}/api/chat",
             json={
                 "model": self._model,
                 "messages": [
@@ -222,6 +226,7 @@ class Generator:
             stream=True,
             timeout=120,
         )
+        response.raise_for_status()
         for line in response.iter_lines():
             if line:
                 chunk = json.loads(line)
