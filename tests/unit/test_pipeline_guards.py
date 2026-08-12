@@ -29,6 +29,16 @@ class TestDetectDosePrescriptionQuery:
         for q in ["桂枝汤的组成是什么", "什么是太阳中风证", "麻黄汤治什么病"]:
             assert detect_dose_prescription_query(q) is None, q
 
+    def test_bleeding_emergency_intercepted(self):
+        """评测 Q8: 流鼻血止不住 → 引导就医"""
+        r = detect_dose_prescription_query("我流鼻血一直止不住，怎么办")
+        assert r is not None
+        assert "立即前往医院急诊" in r
+
+    def test_bleeding_knowledge_not_intercepted(self):
+        """知识性询问不误伤"""
+        assert detect_dose_prescription_query("最近老是流鼻血是怎么回事") is None
+
 
 class TestPipelineGuards:
     """RAGPipeline 安全护栏"""
