@@ -1,0 +1,10 @@
+FROM ./qwen25-15b-tcm-q4km.gguf
+TEMPLATE """{{ if .System }}<|im_start|>system
+{{ .System }}
+{{ end }}{{ if .Prompt }}<|im_start|>user
+{{ .Prompt }}
+{{ end }}<|im_start|>assistant
+{{ .Response }}"""
+PARAMETER stop <|im_start|>
+PARAMETER stop <|im_end|>
+PARAMETER temperature 0.7

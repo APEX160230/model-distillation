@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>云端训练操作指南 — Qwen2.5-1.5B LoRA</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --card: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --green: #3fb950;
+  --orange: #d29922;
+  --red: #f85149;
+  --purple: #bc8cff;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.7;
+  padding: 20px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+h1 { font-size: 1.8em; margin-bottom: 8px; }
+h2 { font-size: 1.4em; margin: 32px 0 12px; color: var(--accent); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+h3 { font-size: 1.15em; margin: 20px 0 8px; color: var(--purple); }
+.subtitle { color: var(--text-dim); font-size: 0.95em; margin-bottom: 24px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card-title { font-weight: 600; font-size: 1.1em; margin-bottom: 12px; }
+.step {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.step-num {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  background: var(--accent);
+  color: var(--bg);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.1em;
+}
+.step-content { flex: 1; }
+.step-content h3 { margin-top: 4px; }
+code, .code {
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+  background: #1c2128;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+  color: var(--orange);
+}
+pre {
+  background: #1c2128;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 0.88em;
+}
+pre code { background: none; padding: 0; color: var(--text); }
+.comment { color: var(--text-dim); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 12px 0;
+  font-size: 0.92em;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+}
+th { background: #1c2128; color: var(--accent); font-weight: 600; }
+td code { font-size: 0.85em; }
+.badge {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.82em;
+  font-weight: 600;
+}
+.badge-green { background: rgba(63,185,80,0.15); color: var(--green); }
+.badge-orange { background: rgba(210,153,34,0.15); color: var(--orange); }
+.badge-blue { background: rgba(88,166,255,0.15); color: var(--accent); }
+.badge-red { background: rgba(248,81,73,0.15); color: var(--red); }
+.warn {
+  background: rgba(210,153,34,0.08);
+  border-left: 3px solid var(--orange);
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+  margin: 12px 0;
+}
+.danger {
+  background: rgba(248,81,73,0.08);
+  border-left: 3px solid var(--red);
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+  margin: 12px 0;
+}
+.tip {
+  background: rgba(88,166,255,0.08);
+  border-left: 3px solid var(--accent);
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+  margin: 12px 0;
+}
+.flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 16px 0;
+}
+.flow-item {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.88em;
+}
+.flow-arrow { color: var(--text-dim); }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 12px 0; }
+@media (max-width: 700px) { .grid-2 { grid-template-columns: 1fr; } .step { flex-direction: column; } }
+summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 8px 0; }
+details { margin: 8px 0; }
+hr { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+</style>
+</head>
+<body>
+
+<h1>云端训练操作指南</h1>
+<p class="subtitle">Qwen2.5-1.5B-Instruct + LoRA 微调 · AutoDL RTX 3090 · 预计 ~30 min / ~5 元</p>
+
+<div class="card">
+  <div class="card-title">整体流程</div>
+  <div class="flow">
+    <span class="flow-item">本地打包</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-item">AutoDL 开实例</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-item">上传文件</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-item">一键训练</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-item">下载 GGUF</span>
+    <span class="flow-arrow">→</span>
+    <span class="flow-item">Ollama 部署</span>
+  </div>
+</div>
+
+<h2>本地 vs 云端配置对比</h2>
+<table>
+  <tr><th>参数</th><th>本地 (GTX 1650)</th><th>云端 (RTX 3090)</th><th>说明</th></tr>
+  <tr><td>量化</td><td><code>4-bit nf4 (QLoRA)</code></td><td><code>bf16 (无量化)</code></td><td>24GB 无需量化，合并更简单</td></tr>
+  <tr><td>MAX_LENGTH</td><td><code>384</code></td><td><code>512</code></td><td>恢复完整长度，减少截断</td></tr>
+  <tr><td>batch_size</td><td><code>1</code></td><td><code>8</code></td><td>PRD §FR4 要求</td></tr>
+  <tr><td>grad_accum</td><td><code>8</code></td><td><code>2</code></td><td>effective batch = 16</td></tr>
+  <tr><td>eval_strategy</td><td><code>no</code> (OOM 风险)</td><td><code>steps</code> (每50步)</td><td>可监控验证集 loss</td></tr>
+  <tr><td>dtype</td><td><code>fp16</code></td><td><code>bf16</code></td><td>RTX 3090 支持 bf16，数值更稳定</td></tr>
+  <tr><td>save_steps</td><td><code>10</code> (频繁防崩溃)</td><td><code>50</code></td><td>云端稳定，减少 IO</td></tr>
+  <tr><td>合并方式</td><td>需单独 <code>merge_lora.py</code></td><td>训练后自动合并</td><td>bf16 模型可直接 merge</td></tr>
+  <tr><td>预计耗时</td><td>~2.3h (频繁崩溃)</td><td>~30 min</td><td>10x 加速</td></tr>
+</table>
+
+<h2>Step 1: 本地打包</h2>
+<div class="step">
+  <div class="step-num">1</div>
+  <div class="step-content">
+    <p>在项目根目录执行打包脚本：</p>
+    <pre><code><span class="comment"># 在本地项目根目录执行</span>
+bash scripts/pack_for_cloud.sh</code></pre>
+    <p>产出 <code>cloud_training_package.tar.gz</code>（约 7MB），包含：</p>
+    <table>
+      <tr><th>文件</th><th>大小</th><th>用途</th></tr>
+      <tr><td><code>scripts/cloud_train.py</code></td><td>~12KB</td><td>云端训练脚本</td></tr>
+      <tr><td><code>scripts/cloud_run.sh</code></td><td>~3KB</td><td>一键运行脚本</td></tr>
+      <tr><td><code>data/processed/sft_train_final.jsonl</code></td><td>~6MB</td><td>训练集 3960 条</td></tr>
+      <tr><td><code>data/processed/sft_val_final.jsonl</code></td><td>~0.7MB</td><td>验证集 440 条</td></tr>
+    </table>
+  </div>
+</div>
+
+<h2>Step 2: AutoDL 开实例</h2>
+<div class="step">
+  <div class="step-num">2</div>
+  <div class="step-content">
+    <h3>2.1 选择配置</h3>
+    <table>
+      <tr><th>项目</th><th>推荐值</th><th>说明</th></tr>
+      <tr><td>GPU</td><td><span class="badge badge-green">RTX 3090 24GB</span></td><td>性价比最高，1.89元/小时</td></tr>
+      <tr><td>镜像</td><td>PyTorch 2.1+ / CUDA 12.1</td><td>AutoDL 预装，无需手动配</td></tr>
+      <tr><td>数据盘</td><td>默认 50GB</td><td>足够存放模型+产出</td></tr>
+      <tr><td>计费方式</td><td>按量付费</td><td>用完即关，不浪费</td></tr>
+    </table>
+
+    <div class="tip">
+      <strong>省钱技巧：</strong>AutoDL 支持「无卡模式」开机（0.1元/小时），可以先用无卡模式上传文件、装依赖，然后再切到 GPU 实例开始训练。但考虑到文件只有 7MB、依赖安装很快，直接开 GPU 也可以。
+    </div>
+
+    <h3>2.2 连接实例</h3>
+    <p>AutoDL 提供两种连接方式：</p>
+    <ul style="margin-left: 20px; margin-top: 8px;">
+      <li><strong>SSH 终端</strong>：复制 SSH 命令到本地终端</li>
+      <li><strong>JupyterLab</strong>：浏览器直接打开，适合上传文件</li>
+    </ul>
+    <pre><code><span class="comment"># SSH 连接示例（端口和地址在 AutoDL 控制台查看）</span>
+ssh -p 12345 root@region-1.autodl.pro</code></pre>
+  </div>
+</div>
+
+<h2>Step 3: 上传文件</h2>
+<div class="step">
+  <div class="step-num">3</div>
+  <div class="step-content">
+    <h3>方式 A: SCP 上传（推荐）</h3>
+    <pre><code><span class="comment"># 在本地终端执行</span>
+scp -P &lt;AutoDL端口&gt; cloud_training_package.tar.gz root@&lt;AutoDL地址&gt;:/root/autodl-tmp/</code></pre>
+
+    <h3>方式 B: JupyterLab 上传</h3>
+    <p>打开 JupyterLab → 导航到 <code>/root/autodl-tmp/</code> → 拖拽上传</p>
+
+    <h3>解压</h3>
+    <pre><code><span class="comment"># 在 AutoDL 终端执行</span>
+cd /root/autodl-tmp
+tar -xzf cloud_training_package.tar.gz
+mkdir -p model-distillation
+mv scripts data model-distillation/
+cd model-distillation</code></pre>
+  </div>
+</div>
+
+<h2>Step 4: 一键训练</h2>
+<div class="step">
+  <div class="step-num">4</div>
+  <div class="step-content">
+    <p>在 AutoDL 终端执行一键脚本：</p>
+    <pre><code>cd /root/autodl-tmp/model-distillation
+bash scripts/cloud_run.sh</code></pre>
+    <p>脚本会自动完成：</p>
+    <div class="flow">
+      <span class="flow-item">环境检查</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">安装依赖</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">下载基座模型</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">训练 LoRA</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">合并模型</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">GGUF 量化</span>
+      <span class="flow-arrow">→</span>
+      <span class="flow-item">打包</span>
+    </div>
+
+    <div class="card" style="margin-top: 16px;">
+      <div class="card-title">训练日志示例</div>
+      <pre><code>[1/7] 加载 tokenizer: Qwen/Qwen2.5-1.5B-Instruct
+  Vocab size: 151643
+[2/7] 加载模型 (bf16, 无量化)...
+  加载耗时: 12.3s
+  VRAM 使用: 3.12GB / 24.0GB
+  参数量: 1543.7M
+[4/7] 配置 LoRA (rank=8, alpha=32)...
+  trainable params: 1,089,536 || all params: 1,544,833,024 || trainable%: 0.0705
+[6/7] 开始训练...
+  Estimated steps: ~742
+  [step 5/742] epoch=0.03 loss=2.1453 lr=1.99e-04 vram_free=18.2GB (0.7%)
+  [step 50/742] epoch=0.27 eval_loss=1.8234 lr=1.89e-04 vram_free=17.9GB (6.7%)
+  [step 100/742] epoch=0.54 loss=1.6532 lr=1.72e-04 vram_free=18.1GB (13.5%)
+  ...
+  [step 742/742] epoch=3.00 loss=1.0234 lr=0.00e+00 vram_free=17.8GB (100.0%)
+训练完成!
+  Final loss: 1.2345
+  Total time: 28.3 min</code></pre>
+    </div>
+
+    <div class="tip">
+      <strong>训练中可以离开</strong>AutoDL 的 SSH 会话断开后训练不会中断（tmux/screen 场景除外）。但如果 JupyterLab 关闭，后台进程可能被杀。建议用 <code>nohup</code> 或 <code>tmux</code>：
+      <pre><code>nohup bash scripts/cloud_run.sh > train.log 2>&1 &
+<span class="comment"># 查看进度</span>
+tail -f train.log</code></pre>
+    </div>
+  </div>
+</div>
+
+<h2>Step 5: 下载结果</h2>
+<div class="step">
+  <div class="step-num">5</div>
+  <div class="step-content">
+    <p>训练完成后，产出文件：</p>
+    <table>
+      <tr><th>文件</th><th>大小</th><th>用途</th></tr>
+      <tr><td><code>tcm_model_package.tar.gz</code></td><td>~1.1GB</td><td>打包文件（含 GGUF + Modelfile + stats）</td></tr>
+      <tr><td><code>qwen25-15b-tcm-q4_k_m.gguf</code></td><td>~1.0GB</td><td>量化后模型</td></tr>
+      <tr><td><code>Modelfile</code></td><td>~0.7KB</td><td>Ollama 配置</td></tr>
+      <tr><td><code>output_lora_v2/training_stats.json</code></td><td>~1KB</td><td>训练统计</td></tr>
+    </table>
+
+    <h3>下载到本地</h3>
+    <pre><code><span class="comment"># 在本地终端执行</span>
+scp -P &lt;AutoDL端口&gt; root@&lt;AutoDL地址&gt;:/root/autodl-tmp/model-distillation/tcm_model_package.tar.gz .</code></pre>
+
+    <div class="warn">
+      <strong>注意：</strong>下载完成后立即在 AutoDL 控制台「关机」实例，避免持续计费。关机后数据盘保留（下次开机可继续用），但不产生 GPU 费用。
+    </div>
+  </div>
+</div>
+
+<h2>Step 6: 本地部署</h2>
+<div class="step">
+  <div class="step-num">6</div>
+  <div class="step-content">
+    <pre><code><span class="comment"># 解压</span>
+tar -xzf tcm_model_package.tar.gz
+
+<span class="comment"># 创建 Ollama 模型</span>
+ollama create qwen25-15b-tcm -f Modelfile
+
+<span class="comment"># 验证</span>
+ollama run qwen25-15b-tcm "什么是太阳病？"</code></pre>
+
+    <p>预期输出（口语化风格）：</p>
+    <pre><code>太阳病啊，这个是伤寒论里最开头讲的。什么意思呢，就是说你这个风寒之邪，
+它从外面进来，首先侵犯的就是你的体表，你的肌肤表面。那这时候你的身体
+会怎么样呢？它会起来抵抗，正气和邪气在体表打架，这就叫太阳病...</code></pre>
+  </div>
+</div>
+
+<h2>费用估算</h2>
+<div class="card">
+  <table>
+    <tr><th>项目</th><th>时长</th><th>单价</th><th>费用</th></tr>
+    <tr><td>RTX 3090 实例</td><td>~40 min（含下载模型+训练+GGUF）</td><td>1.89 元/小时</td><td>~1.3 元</td></tr>
+    <tr><td>数据盘存储</td><td>1 天</td><td>~0.01 元/GB/天</td><td>~0.5 元</td></tr>
+    <tr><td colspan="3" style="text-align:right;font-weight:600;">总计</td><td><span class="badge badge-green">~2-5 元</span></td></tr>
+  </table>
+  <div class="tip" style="margin-top:12px;">
+    如果训练失败需要重跑，模型已下载到数据盘，重跑只需 ~30 min，约 1 元。
+  </div>
+</div>
+
+<h2>故障排查</h2>
+
+<details>
+<summary>Q: pip install 报错 / 网络超时</summary>
+<div class="card" style="margin-top:8px;">
+  <p>AutoDL 默认走国内镜像，一般不会超时。如果遇到：</p>
+  <pre><code>pip install -q transformers peft datasets accelerate \
+  -i https://pypi.tuna.tsinghua.edu.cn/simple</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: 模型下载慢 / 超时</summary>
+<div class="card" style="margin-top:8px;">
+  <p>优先用 modelscope（阿里国内源），已在 cloud_run.sh 中配置。如果仍失败：</p>
+  <pre><code><span class="comment"># 手动用 modelscope 下载</span>
+pip install modelscope
+python -c "
+from modelscope import snapshot_download
+snapshot_download('Qwen/Qwen2.5-1.5B-Instruct', cache_dir='/root/autodl-tmp/models')
+"</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: 训练 OOM (显存不足)</summary>
+<div class="card" style="margin-top:8px;">
+  <p>RTX 3090 24GB 跑 1.5B bf16 LoRA 绑绑有余。如果真遇到 OOM：</p>
+  <pre><code><span class="comment"># 在 cloud_train.py 中调小 batch_size</span>
+BATCH_SIZE = 4   # 从 8 降到 4
+GRAD_ACCUM = 4   # 保持 effective batch = 16</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: llama.cpp 编译失败</summary>
+<div class="card" style="margin-top:8px;">
+  <p>可能缺少 cmake 或 gcc。AutoDL PyTorch 镜像一般已预装。如果失败：</p>
+  <pre><code>apt update && apt install -y cmake build-essential
+cd llama.cpp && make llama-quantize -j$(nproc)</code></pre>
+  <p>也可以跳过本地编译，直接用预编译版本：</p>
+  <pre><code><span class="comment"># 下载预编译的 llama.cpp</span>
+wget https://github.com/ggerganov/llama.cpp/releases/latest/download/llama-bXXXX-bin-ubuntu-x64.zip
+unzip llama-b*.zip && chmod +x llama-quantize</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: SSH 断开后训练中断</summary>
+<div class="card" style="margin-top:8px;">
+  <p>使用 tmux 或 nohup 保持后台运行：</p>
+  <pre><code><span class="comment"># 方式 1: tmux（推荐）</span>
+tmux new -s train
+bash scripts/cloud_run.sh
+<span class="comment"># Ctrl+B 然后 D 脱离会话</span>
+<span class="comment"># 重连: tmux attach -t train</span>
+
+<span class="comment"># 方式 2: nohup</span>
+nohup bash scripts/cloud_run.sh > train.log 2>&1 &
+tail -f train.log</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: 训练中断后如何恢复</summary>
+<div class="card" style="margin-top:8px;">
+  <p>cloud_train.py 已内置自动恢复：检测到 <code>output_lora_v2/checkpoint-*</code> 会自动从最新 checkpoint 继续。直接重新运行即可：</p>
+  <pre><code>python scripts/cloud_train.py</code></pre>
+</div>
+</details>
+
+<details>
+<summary>Q: 只想重新做 GGUF 转换（跳过训练）</summary>
+<div class="card" style="margin-top:8px;">
+  <pre><code>python scripts/cloud_train.py --skip-train</code></pre>
+</div>
+</details>
+
+<h2>文件清单</h2>
+<div class="card">
+  <table>
+    <tr><th>文件</th><th>位置</th><th>说明</th></tr>
+    <tr><td><code>scripts/cloud_train.py</code></td><td>本地 → AutoDL</td><td>云端训练脚本（训练+合并+GGUF）</td></tr>
+    <tr><td><code>scripts/cloud_run.sh</code></td><td>本地 → AutoDL</td><td>AutoDL 一键运行脚本</td></tr>
+    <tr><td><code>scripts/pack_for_cloud.sh</code></td><td>本地</td><td>本地打包脚本</td></tr>
+    <tr><td><code>data/processed/sft_train_final.jsonl</code></td><td>本地 → AutoDL</td><td>训练集 3960 条</td></tr>
+    <tr><td><code>data/processed/sft_val_final.jsonl</code></td><td>本地 → AutoDL</td><td>验证集 440 条</td></tr>
+  </table>
+</div>
+
+<hr>
+<p style="color:var(--text-dim);font-size:0.85em;text-align:center;">
+  端侧模型蒸馏项目 · 云端训练指南 · 2026-08
+</p>
+
+</body>
+</html>
