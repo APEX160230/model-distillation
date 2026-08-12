@@ -189,6 +189,25 @@ class HybridRetriever:
                 results.append(result)
         return results
 
+    def _enrich_formula_compositions(self, formula_names: list[str]) -> list[dict[str, Any]]:
+        """从方剂数据库取回组成信息，注入生成上下文
+
+        症状类查询（SEMANTIC 分支）检索到方剂名时，把每个方剂的完整组成
+        一并注入，避免模型凭记忆编造组成（如麻黄汤混入生姜大枣）。
+        """
+        compositions = []
+        for name in formula_names:
+            info = self._formula_dict.get(name)
+            if info:
+                compositions.append({
+                    "name": info.name,
+                    "herbs": info.herbs,
+                    "syndrome": info.syndrome,
+                    "brief": info.brief,
+                    "clause_id": info.clause_id,
+                })
+        return compositions
+
     def _search_by_clause_id(
         self, clause_id: int | None, top_k: int
     ) -> list[RetrievalResult]:
@@ -368,6 +387,9 @@ class HybridRetriever:
                 "defining_clauses": concept.defining_clauses,
                 "treatment_clauses": concept.treatment_clauses,
             }
+            compositions = self._enrich_formula_compositions(concept.related_formulas)
+            if compositions:
+                self._last_context["formula_compositions"] = compositions
             results = self._clauses_to_results(concept.all_clauses, distance=0.0)
             if len(results) < top_k and concept.expansion_keywords:
                 expanded_query = " ".join(concept.expansion_keywords)
@@ -394,6 +416,9 @@ class HybridRetriever:
                     "treatment_clauses": concept.treatment_clauses,
                     "matched_symptoms": symptoms,
                 }
+                compositions = self._enrich_formula_compositions(concept.related_formulas)
+                if compositions:
+                    self._last_context["formula_compositions"] = compositions
                 results = self._clauses_to_results(concept.all_clauses, distance=0.0)
                 # BM25 补充（用口语扩展查询）
                 expanded = self._concept_mapper.expand_colloquial(original_query)
@@ -416,6 +441,9 @@ class HybridRetriever:
                 "syndrome": core,
                 "formulas": graph_result.formula_names,
             }
+            compositions = self._enrich_formula_compositions(graph_result.formula_names)
+            if compositions:
+                self._last_context["formula_compositions"] = compositions
             results = self._clauses_to_results(graph_result.clause_ids, distance=0.0)
             if len(results) >= top_k:
                 return results[:top_k]

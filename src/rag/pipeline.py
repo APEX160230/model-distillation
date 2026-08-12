@@ -3,15 +3,62 @@
 P2.1: 支持 ConceptMapper/GraphRAG 结构化上下文传递。
 将检索器的额外上下文（概念简述、方剂对比、药材列表）传给生成器，
 帮助 1.5B 模型生成更准确的答案。
+
+P0-4 安全护栏：
+- 检索为空（0 条依据）时拒答，不调用模型，杜绝自由发挥
+- 剂量/处方类查询直接拦截，符合 PRD「不提供诊疗建议」边界
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
 from src.rag.generate import Generator
 from src.rag.retrieve import RetrievalResult, VectorRetriever
 from src.rag.hybrid_retriever import HybridRetriever
+
+# ── 安全护栏（P0-4）────────────────────────────────────────
+
+# 检索为空时的拒答话术
+EMPTY_RETRIEVAL_MESSAGE = (
+    "抱歉，我在经典知识库中没有检索到与这个问题相关的内容。"
+    "本系统目前收录的是伤寒论相关的方证知识，您可以换个问法，"
+    "或咨询专业中医师获取帮助。"
+)
+
+# 剂量/处方类查询关键词（命中即拦截，不检索不生成）
+_DOSE_QUERY_PATTERN = re.compile(
+    r"多少克|多少钱|多少两|几克|几钱|剂量|用量|怎么吃|怎么服|吃多少|"
+    r"一次吃|每次吃|一日吃|开个方|开方|处方|"
+    r"给我开|帮我开|药方|抓药|煎药|熬药|服用方法"
+)
+
+# 危象类查询关键词（命中即拒答并引导就医）
+# 注意：仅匹配明确的急危重症表述，避免误伤中医证名（如"太阳中风证"）
+_EMERGENCY_QUERY_PATTERN = re.compile(
+    r"脑溢血|脑出血|急性心梗|心肌梗死|休克|大出血|昏迷不醒|抽搐不止|呼吸困难|"
+    r"剧烈胸痛|胸口剧痛|快不行|急救|马上要晕|晕倒在地|中风了|脑中风|中风发作|急性中风"
+)
+
+
+def detect_dose_prescription_query(question: str) -> str | None:
+    """检测剂量/处方类查询，命中返回拒答话术
+
+    评测暴露：模型会编造剂量（"桂枝5钱"）甚至虚构处方。
+    这类查询直接拦截，不进入检索和生成链路。
+    """
+    if _DOSE_QUERY_PATTERN.search(question):
+        return (
+            "本系统是中医经典知识问答工具，按产品定位不提供具体用药剂量和处方建议。"
+            "相关剂量的记载请查阅《伤寒论》原文，具体用药请咨询专业中医师。"
+        )
+    if _EMERGENCY_QUERY_PATTERN.search(question):
+        return (
+            "您描述的情况可能属于急症，请立即前往医院急诊就医，不要延误治疗。"
+            "本系统仅提供中医经典知识讲解，不能替代专业医疗判断。"
+        )
+    return None
 
 
 @dataclass
@@ -72,9 +119,21 @@ class RAGPipeline:
         """完整 RAG 查询：检索 → 生成
 
         P2.1: 自动从 HybridRetriever 获取额外上下文并传给生成器。
+        P0-4: 剂量/处方查询直接拦截；检索为空拒答，不调用模型。
         """
         import time
         start = time.time()
+
+        # P0-4 护栏 1：剂量/处方/危象类查询直接拦截
+        rejection = detect_dose_prescription_query(question)
+        if rejection:
+            return RAGResponse(
+                answer=rejection,
+                retrieved_docs=[],
+                latency=round(time.time() - start, 2),
+                route_type="rejected",
+                context_extras={"rejection": rejection},
+            )
 
         docs = self.retrieve(question)
 
@@ -85,6 +144,36 @@ class RAGPipeline:
             if self._hybrid_retriever.last_route:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
+
+        # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
+        has_effective_context = bool(
+            context_extras
+            and any(
+                k in context_extras
+                for k in ("concept", "formula_info", "herb_query", "comparison",
+                          "graph_syndrome", "formula_compositions")
+            )
+        )
+        if not docs:
+            # 超范围查询（out_of_scope）→ 用其消息拒答
+            if context_extras and context_extras.get("out_of_scope"):
+                message = context_extras["out_of_scope"].get(
+                    "message", EMPTY_RETRIEVAL_MESSAGE)
+                return RAGResponse(
+                    answer=message,
+                    retrieved_docs=[],
+                    latency=round(time.time() - start, 2),
+                    route_type=route_type,
+                    context_extras=context_extras,
+                )
+            if not has_effective_context:
+                return RAGResponse(
+                    answer=EMPTY_RETRIEVAL_MESSAGE,
+                    retrieved_docs=[],
+                    latency=round(time.time() - start, 2),
+                    route_type=route_type,
+                    context_extras=context_extras,
+                )
 
         answer = self._generator.generate(
             question, docs,
@@ -109,9 +198,18 @@ class RAGPipeline:
     ) -> tuple[list[RetrievalResult], Iterator[str], str, dict[str, Any] | None]:
         """流式 RAG 查询：先检索，再流式生成
 
+        P0-4: 剂量/处方查询直接拦截；检索为空拒答，不调用模型。
+
         Returns:
             (docs, stream, route_type, context_extras)
         """
+        # P0-4 护栏 1：剂量/处方/危象类查询直接拦截
+        rejection = detect_dose_prescription_query(question)
+        if rejection:
+            def _rejection_stream():
+                yield rejection
+            return [], _rejection_stream(), "rejected", {"rejection": rejection}
+
         docs = self.retrieve(question)
 
         route_type = ""
@@ -120,6 +218,29 @@ class RAGPipeline:
             if self._hybrid_retriever.last_route:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
+
+        # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
+        has_effective_context = bool(
+            context_extras
+            and any(
+                k in context_extras
+                for k in ("concept", "formula_info", "herb_query", "comparison",
+                          "graph_syndrome", "formula_compositions")
+            )
+        )
+        if not docs:
+            # 超范围查询（out_of_scope）→ 用其消息拒答
+            if context_extras and context_extras.get("out_of_scope"):
+                message = context_extras["out_of_scope"].get(
+                    "message", EMPTY_RETRIEVAL_MESSAGE)
+
+                def _outofscope_stream():
+                    yield message
+                return [], _outofscope_stream(), route_type, context_extras
+            if not has_effective_context:
+                def _empty_stream():
+                    yield EMPTY_RETRIEVAL_MESSAGE
+                return [], _empty_stream(), route_type, context_extras
 
         stream = self._generator.stream_generate(
             question, docs,

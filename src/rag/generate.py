@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Iterator
 
 import requests
@@ -14,13 +15,18 @@ import requests
 from src.rag.retrieve import RetrievalResult
 
 SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。
-请用口语化的讲解风格，像老师讲课一样回答问题。
-请根据提供的经典原文和参考信息回答问题。
-注意事项：
-- 引用经典原文时标注条文编号
-- 解释方剂时列出完整组成
-- 不提供具体诊疗建议
-- 如果检索结果中没有相关信息，请如实说明"""
+请用口语化的讲解风格，像老师讲课一样回答问题，同时保持正式得体。
+
+回答规则（必须严格遵守）：
+1. 【方剂信息】【组成】等参考信息中的方剂组成、主治是经过核实的权威内容，
+   引用时必须原文照抄，不得增删改换任何一味药。
+2. 引用经典原文时，只能引用参考信息中出现的条文，编号以【第X条】为准，
+   不得编造不存在的条文编号。
+3. 参考信息中没有的内容，不要编造。特别是：
+   - 不知道方剂的用量剂量时，明确说明"原书记载的剂量用法需查阅原文，此处不提供"
+   - 不提供具体诊疗建议，不针对个人病情开方
+4. 如果检索结果为空或与问题无关，如实说明"知识库中未收录相关内容"。
+5. 回答控制在 200-500 字，结构清晰，不要跑题。"""
 
 
 def format_retrieved_docs(docs: list[RetrievalResult]) -> str:
@@ -95,6 +101,17 @@ def format_context_extras(extras: dict[str, Any] | None) -> str:
         if formulas:
             parts.append(f"【证候方剂】相关方剂：{'、'.join(formulas)}")
 
+    # 方剂组成列表（症状→证候→方剂路径注入，P0-4）
+    compositions = extras.get("formula_compositions")
+    if compositions:
+        parts.append("【方剂组成】（以下组成经核实，引用时必须原文照抄）")
+        for c in compositions:
+            herbs = "、".join(c.get("herbs", []))
+            line = f"{c.get('name', '')}：{herbs}"
+            if c.get("syndrome"):
+                line += f"（主治{c.get('syndrome')}）"
+            parts.append(line)
+
     # 超范围标记
     out_of_scope = extras.get("out_of_scope")
     if out_of_scope:
@@ -155,6 +172,8 @@ class Generator:
         temperature: float = 0.7,
         max_tokens: int = 512,
         context_extras: dict[str, Any] | None = None,
+        verify: bool = True,
+        safe_filter: bool = True,
     ) -> str:
         """同步生成回答
 
@@ -164,9 +183,8 @@ class Generator:
             temperature: 采样温度
             max_tokens: 最大生成 token 数
             context_extras: 额外上下文（P2.1）
-
-        Returns:
-            生成的回答文本
+            verify: 是否对回答做条文编号交叉校验（P0-4）
+            safe_filter: 是否对回答做输出侧安全过滤（P0-4）
         """
         prompt = build_prompt(question, docs, context_extras)
         response = requests.post(
@@ -186,7 +204,12 @@ class Generator:
             timeout=120,
         )
         response.raise_for_status()
-        return response.json()["message"]["content"]
+        answer = response.json()["message"]["content"]
+        if verify:
+            answer = verify_clause_numbers(answer, docs)
+        if safe_filter:
+            answer = apply_safety_filter(answer)
+        return answer
 
     def stream_generate(
         self,
@@ -195,6 +218,8 @@ class Generator:
         temperature: float = 0.7,
         max_tokens: int = 512,
         context_extras: dict[str, Any] | None = None,
+        verify: bool = True,
+        safe_filter: bool = True,
     ) -> Iterator[str]:
         """流式生成回答
 
@@ -204,9 +229,11 @@ class Generator:
             temperature: 采样温度
             max_tokens: 最大生成 token 数
             context_extras: 额外上下文（P2.1）
+            verify: 是否对回答做条文编号交叉校验（P0-4，流式在收尾时校验）
+            safe_filter: 是否对回答做输出侧安全过滤（P0-4，流式在收尾时追加免责）
 
         Yields:
-            生成的文本片段
+            生成的文本片段（流式片段 + 可能的收尾修正片段）
         """
         prompt = build_prompt(question, docs, context_extras)
         response = requests.post(
@@ -227,9 +254,102 @@ class Generator:
             timeout=120,
         )
         response.raise_for_status()
+        collected: list[str] = []
         for line in response.iter_lines():
             if line:
                 chunk = json.loads(line)
                 content = chunk.get("message", {}).get("content", "")
                 if content:
+                    collected.append(content)
                     yield content
+
+        # 流式已发出的内容无法撤回，编号校验无法修正已发内容；
+        # 安全过滤通过追加免责声明实现（P0-4）
+        if collected and safe_filter:
+            full = "".join(collected)
+            filtered = apply_safety_filter(full)
+            suffix = filtered[len(full):]
+            if suffix:
+                yield suffix
+
+
+# ── 输出侧安全护栏（P0-4）──────────────────────────────────
+
+# 条文编号引用模式：匹配【第X条】或第X条
+_CLAUSE_REF_PATTERN = re.compile(r"[【\[]\s*第\s*(\d+)\s*条\s*[】\]]|第\s*(\d+)\s*条")
+
+
+def verify_clause_numbers(answer: str, docs: list[RetrievalResult]) -> str:
+    """条文编号交叉校验：删除回答中检索结果里不存在的条文编号引用
+
+    模型生成时可能编造条文编号（如把第 23 条内容标成第 12 条）。
+    此函数扫描回答中的「第X条」引用，凡编号不在本次检索结果中的，
+    删除该引用标记（保留其余文本），避免误导用户。
+
+    Args:
+        answer: 模型生成的回答
+        docs: 本次检索结果
+
+    Returns:
+        校验后的回答
+    """
+    if not docs:
+        return answer
+
+    valid_ids = {d.clause_id for d in docs if hasattr(d, "clause_id") and d.clause_id is not None}
+
+    def _replace(match: re.Match) -> str:
+        g1, g2 = match.group(1), match.group(2)
+        num = int(g1 or g2)
+        if num in valid_ids:
+            return match.group(0)
+        # 编号不在检索结果中 → 删除引用标记，避免编造
+        return ""
+
+    return _CLAUSE_REF_PATTERN.sub(_replace, answer)
+
+
+# 剂量/处方关键词（数字+单位，或明确的剂量引导词）
+# 数字支持阿拉伯数字与中文数字（中医剂量常用"三钱""二钱""十二枚"）
+_CN_NUM = r"[0-9０-９一二三四五六七八九十百千万两半]"
+_DOSE_PATTERN = re.compile(
+    rf"{_CN_NUM}+\s*(克|钱|两|斤|g|G|ml|毫升|片|粒|枚|付|剂|碗|升)"
+    r"|剂量|用量|用法|一次\s*\d+|每次\s*\d+|开方|处方|抓药|煎服|水煎服"
+)
+# 危象关键词：需要立即就医
+_EMERGENCY_PATTERN = re.compile(r"脑溢血|脑出血|心梗|心肌梗死|休克|大出血|昏迷|抽搐|呼吸困难|剧烈胸痛")
+# 免责声明
+_DISCLAIMER = "\n\n（以上内容仅为中医经典知识讲解，不构成诊疗建议。具体用药请咨询专业中医师。）"
+
+
+def apply_safety_filter(answer: str) -> str:
+    """输出侧安全过滤：检测剂量/处方/危象关键词，追加免责声明
+
+    评测中模型曾直接给出具体剂量（如"桂枝5钱"）甚至编造处方，
+    违反 PRD「不提供诊疗建议」边界。检测到剂量类表述时追加免责声明；
+    检测到危象症状时追加就医提醒。
+
+    Args:
+        answer: 模型生成的回答
+
+    Returns:
+        过滤后的回答（可能追加免责声明）
+    """
+    if not answer:
+        return answer
+
+    append = []
+    if _DOSE_PATTERN.search(answer):
+        append.append(_DISCLAIMER)
+    if _EMERGENCY_PATTERN.search(answer):
+        append.append("\n\n（若您或家人出现上述急危重症表现，请立即前往医院急诊就医。）")
+
+    if not append:
+        return answer
+
+    # 避免重复追加
+    result = answer
+    for suffix in append:
+        if suffix not in result:
+            result += suffix
+    return result
