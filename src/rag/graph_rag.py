@@ -117,9 +117,9 @@ class TCMKnowledgeGraph:
                     formula_names.append(fname)
 
                 cid = data.get("clause_id")
-                if cid and cid not in seen_clause:
+                if cid and cid not in seen_clauses:
                     clause_ids.append(cid)
-                    seen_clause.add(cid)
+                    seen_clauses.add(cid)
 
         return GraphQueryResult(
             clause_ids=clause_ids,
