@@ -13,52 +13,46 @@
 
 ```
 用户浏览器
-    │
+    │  https (nginx :443, SSE 需关闭缓冲)
     ▼
-FastAPI (端口 8000)
-    ├── HybridRetriever
-    │   ├── QueryRouter (查询路由)
-    │   ├── ConceptMapper (概念映射)
-    │   ├── BM25 (关键词检索)
-    │   ├── VectorRetriever (ChromaDB 向量检索)
-    │   └── GraphRAG (知识图谱多跳查询)
-    │
-    └── Generator → Ollama (端口 11434)
-                    └── qwen25-15b-tcm (Q4 量化, ~1.2GB)
+tcm-backend (systemd, FastAPI :8002)
+    ├── QueryRouter     查询路由
+    ├── ConceptMapper   概念映射
+    ├── BM25            关键词检索
+    ├── VectorRetriever 向量检索（ChromaDB）
+    ├── GraphRAG        知识图谱多跳查询
+    └── Generator ──► Ollama (127.0.0.1:11434)
+                    └── tcm-model (Q4 量化, ~1.2 GB)
 ```
 
-## 方式一：直接部署（推荐 2核4G 服务器）
+## 方式一：裸机部署（推荐 2 核 4G 服务器）
 
 ### 1. 安装系统依赖
 
 ```bash
-# Python 3.12+
+# Python 3.11+
 python3 --version
 
 # 安装 Ollama
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-### 2. 加载模型
+### 2. 导入微调模型
+
+将微调后的 GGUF 文件（如 `qwen25-15b-tcm-q4km.gguf`）放到工作目录，与 `Modelfile` 同目录：
 
 ```bash
-# 导入微调后的 GGUF 模型
-ollama create qwen25-15b-tcm -f Modelfile
+ollama create tcm-model -f Modelfile
 
 # 验证
 ollama list
-# 应显示: qwen25-15b-tcm
+# 应显示: tcm-model
 
 # 测试
-ollama run qwen25-15b-tcm "你好"
+ollama run tcm-model "桂枝汤主治什么？"
 ```
 
-Modelfile 示例:
-```
-FROM ./models/qwen25-15b-tcm-q4_k_m.gguf
-PARAMETER temperature 0.7
-PARAMETER num_ctx 2048
-```
+> 提示：系统提示词（口语化讲解风格）已内置在代码 `src/rag/generate.py` 的 `SYSTEM_PROMPT` 中，无需在 Modelfile 重复配置。
 
 ### 3. 安装 Python 依赖
 
@@ -73,42 +67,68 @@ pip install -e ".[rag,serve]"
 ### 4. 初始化向量库
 
 ```bash
-# 首次运行需要构建 ChromaDB 向量库
-python -m src.data.extract
-python -m src.data.clean
-python -m src.rag.embed
+# 构建 ChromaDB 向量库（幂等：条文数据未变更则跳过）
+# 首次运行会自动下载 bge-small-zh-v1.5 模型
+python scripts/build_chroma.py
+
+# 服务器无外网或下载失败时，可指定本地模型路径
+python scripts/build_chroma.py --model /path/to/bge-small-zh-v1.5
 ```
 
-### 5. 启动服务
+### 5. 配置 systemd 服务
+
+```ini
+# /etc/systemd/system/tcm-backend.service
+[Unit]
+Description=TCM Assistant Backend
+After=network.target ollama.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/tcm/backend
+ExecStart=/home/ubuntu/tcm/backend/.venv/bin/python -m src.serve.main
+Restart=always
+RestartSec=5
+Environment=PORT=8002
+Environment=MODEL=tcm-model
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-# 开发模式
-python -m src.serve.main
-
-# 生产模式（推荐用 gunicorn 管理 uvicorn worker）
-pip install gunicorn
-gunicorn src.serve.main:app -w 1 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
-
-# 后台运行
-nohup python -m src.serve.main > server.log 2>&1 &
+sudo systemctl daemon-reload
+sudo systemctl enable --now tcm-backend
+sudo systemctl status tcm-backend
 ```
 
-### 6. Nginx 反向代理（可选）
+### 6. Nginx 反向代理（HTTPS）
 
 ```nginx
+# /etc/nginx/sites-available/tcm
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name tcm.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name tcm.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/tcm.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/tcm.example.com/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8000;
+        proxy_pass http://127.0.0.1:8002;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
 
-        # SSE 支持
+        # SSE 流式必需
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 120s;
+        proxy_http_version 1.1;
     }
 }
 ```
@@ -121,32 +141,54 @@ docker-compose up -d
 
 # 查看日志
 docker-compose logs -f app
-
-# 停止
-docker-compose down
 ```
 
-首次启动后需要拉取模型:
+首次启动后需要导入模型：
+
 ```bash
-# 进入 Ollama 容器拉取模型
-docker exec -it tcm-ollama ollama pull qwen2.5:1.5b
-# 或导入微调模型
-docker cp models/qwen25-15b-tcm-q4_k_m.gguf tcm-ollama:/tmp/
-docker exec -it tcm-ollama ollama create qwen25-15b-tcm -f /tmp/Modelfile
+# 进入 Ollama 容器
+docker exec -it tcm-ollama sh
+# 导入微调模型
+ollama create tcm-model -f /Modelfile
 ```
+
+## 方式三：CI/CD 自动部署（推荐）
+
+推送 main 分支后，GitHub Actions 自动执行：
+
+1. **测试**（74 个：单元 + 集成）→ 2. **脚本校验 + 前端冒烟** → 3. **部署**
+
+部署脚本 `scripts/deploy.sh` 流程：
+
+```
+[1/6] 上传源码 src/
+[2/6] 上传数据资产 + 重建脚本
+[3/6] 上传 Modelfile
+[4/6] 条文变更时重建向量库（md5 幂等，未变更跳过）
+[5/6] 重启 tcm-backend 服务
+[6/6] 健康检查（内网 + 公网 https）
+```
+
+需要配置的 GitHub Secrets：
+
+| Secret | 说明 |
+|--------|------|
+| `DEPLOY_HOST` | 服务器地址（如 zzy1n.cc） |
+| `DEPLOY_USER` | SSH 用户（默认 ubuntu） |
+| `DEPLOY_KEY` | 部署专用 SSH 私钥 |
 
 ## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `PORT` | `8000` | 服务端口 |
-| `MODEL` | `qwen25-15b-tcm` | Ollama 模型名 |
+| `MODEL` | `tcm-model` | Ollama 模型名 |
 | `USE_HYBRID` | `true` | 启用混合检索（false 回退纯向量） |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama 服务地址 |
 | `HF_ENDPOINT` | `https://hf-mirror.com` | HuggingFace 镜像 |
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 
-## 内存预算（2核4G）
+## 内存预算（2 核 4G）
 
 | 组件 | 内存占用 |
 |------|----------|
@@ -165,12 +207,13 @@ docker exec -it tcm-ollama ollama create qwen25-15b-tcm -f /tmp/Modelfile
 | 生成延迟 (p50) | 2-5 s |
 | 生成延迟 (p95) | 8-15 s |
 | 并发 | 1（锁死） |
-| recall@5 | 100% |
+| recall@5 | 100%（评测集）/ 90.5%（真实场景） |
 | LLM judge 均分 | 3.56 / 5 |
 
 ## 故障排查
 
 ### Ollama 连接失败
+
 ```bash
 # 检查 Ollama 是否运行
 curl http://localhost:11434/api/tags
@@ -180,13 +223,28 @@ ollama list
 ```
 
 ### ChromaDB 初始化失败
+
 ```bash
 # 删除并重建向量库
 rm -rf data/chroma/
-python -m src.rag.embed
+python scripts/build_chroma.py
+```
+
+### 国内服务器无法下载 bge 模型（hf-mirror 308 问题）
+
+huggingface_hub 对 hf-mirror 的 `resolve/` 路径 HEAD 请求会失败（返回 308 且无法跟随），导致 `LocalEntryNotFoundError`。解决方案：
+
+```bash
+# 1. 用 requests GET 直连下载模型文件到本地（跟随 308 重定向）
+python ~/.workbuddy/skills/hf-mirror-download-fix/scripts/download_model_direct.py \
+    --repo BAAI/bge-small-zh-v1.5 --out /home/ubuntu/tcm/models/bge-small-zh-v1.5
+
+# 2. 构建时指定本地路径
+python scripts/build_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5
 ```
 
 ### 内存不足
+
 ```bash
 # 检查内存使用
 free -h
