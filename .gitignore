@@ -31,6 +31,7 @@ output_merged/
 llama.cpp/
 llama-win-cpu-x64.zip
 *.zip
+*.tar.gz
 
 # Python
 __pycache__/

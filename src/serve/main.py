@@ -32,7 +32,7 @@ def main():
     import uvicorn
 
     use_hybrid = os.environ.get("USE_HYBRID", "true").lower() != "false"
-    model = os.environ.get("MODEL", "qwen25-15b-tcm")
+    model = os.environ.get("MODEL", "tcm-model")
     port = int(os.environ.get("PORT", "8000"))
 
     logger.info(f"启动 RAG 管道: model={model}, hybrid={use_hybrid}")

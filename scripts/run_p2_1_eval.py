@@ -148,10 +148,19 @@ def main():
     print("P2.1 评测: ConceptMapper + GraphRAG + LLM-as-judge")
     print("=" * 60)
 
-    # 检查 Ollama
-    ollama_path = r"C:\Users\23919\AppData\Local\Programs\Ollama\ollama.exe"
-    if not Path(ollama_path).exists():
-        print(f"ERROR: Ollama 未找到: {ollama_path}")
+    # 检查 Ollama（环境变量 OLLAMA_PATH 优先，其次 PATH 自动探测）
+    ollama_path = os.environ.get("OLLAMA_PATH")
+    if not ollama_path:
+        for _dir in os.environ.get("PATH", "").split(os.pathsep):
+            for _name in ("ollama.exe", "ollama"):
+                _candidate = os.path.join(_dir, _name)
+                if os.path.exists(_candidate):
+                    ollama_path = _candidate
+                    break
+            if ollama_path:
+                break
+    if not ollama_path:
+        print("ERROR: Ollama 未找到，请设置环境变量 OLLAMA_PATH 或加入 PATH")
         sys.exit(1)
 
     # 1. 创建 Generator（Ollama 微调模型）

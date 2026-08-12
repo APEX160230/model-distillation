@@ -33,7 +33,7 @@ COPY data/processed/sft_train_p1.jsonl ./data/processed/
 ENV PYTHONUNBUFFERED=1
 ENV HF_ENDPOINT=https://hf-mirror.com
 ENV PORT=8000
-ENV MODEL=qwen25-15b-tcm
+ENV MODEL=tcm-model
 ENV USE_HYBRID=true
 
 # ChromaDB 持久化目录

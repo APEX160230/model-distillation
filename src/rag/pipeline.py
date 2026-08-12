@@ -41,7 +41,7 @@ class RAGPipeline:
         self,
         chroma_path: str = "data/chroma",
         clauses_path: str = "data/processed/classics/shanghan_clauses.jsonl",
-        model: str = "qwen25-15b-tcm",
+        model: str = "tcm-model",
         top_k: int = 5,
         generator=None,
         use_hybrid: bool = True,

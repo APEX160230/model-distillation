@@ -8,7 +8,7 @@ import time
 import os
 from pathlib import Path
 
-PYTHON = r"C:\Users\23919\.workbuddy\binaries\python\envs\tcm-train\Scripts\python.exe"
+PYTHON = sys.executable  # 使用当前解释器，避免硬编码路径
 SCRIPT_DIR = Path(__file__).parent.parent
 TRAIN_SCRIPT = str(SCRIPT_DIR / "scripts" / "train_lora_gpu.py")
 LOG_FILE = str(SCRIPT_DIR / "output_lora_v2" / "training_log.txt")

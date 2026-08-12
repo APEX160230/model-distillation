@@ -2,7 +2,7 @@
 # 用法: docker-compose up -d
 #
 # 需要:
-#   1. Ollama 已安装微调模型 qwen25-15b-tcm (GGUF Q4_K_M)
+#   1. Ollama 已安装微调模型 tcm-model (GGUF Q4_K_M)
 #   2. ChromaDB 向量库已初始化 (data/chroma/)
 #
 # 2核4G 服务器约束:
@@ -33,7 +33,7 @@ services:
       - "8000:8000"
     environment:
       - OLLAMA_HOST=http://ollama:11434
-      - MODEL=qwen25-15b-tcm
+      - MODEL=tcm-model
       - USE_HYBRID=true
     volumes:
       - chroma-data:/app/data/chroma

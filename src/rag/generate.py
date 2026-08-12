@@ -135,13 +135,13 @@ class Generator:
     P2.1: 支持从 ConceptMapper/GraphRAG 传入结构化上下文。
 
     使用示例:
-        gen = Generator(model="qwen25-15b-tcm")
+        gen = Generator(model="tcm-model")
         answer = gen.generate("桂枝汤的组成", docs, context_extras={...})
     """
 
     OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
-    def __init__(self, model: str = "qwen25-15b-tcm") -> None:
+    def __init__(self, model: str = "tcm-model") -> None:
         self._model = model
 
     def generate(
