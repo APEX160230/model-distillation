@@ -137,6 +137,7 @@ python -m src.serve.main
 │   ├── feasibility-report.md   # 可行性验证报告
 │   ├── p1_eval_report.html     # P1 评测报告
 │   ├── p2_eval_report.html     # P2 评测报告
+│   ├── rigor_eval_report.md    # 严谨性评测报告（15 题线上实测）
 │   └── archive/plans/          # 历史实现计划归档（M1/M2）
 ├── src/                        # 源代码
 │   ├── data/                   # 数据处理
@@ -177,7 +178,7 @@ python -m src.serve.main
 │   ├── legacy/                 # 历史验证脚本（探路版，见说明）
 │   └── ...                     # 评测、转换、合并等
 ├── data/                       # 数据
-│   ├── eval/                   # 评测集（50 题 + 10 题真实场景）
+│   ├── eval/                   # 评测集（50 题 + 10 题真实场景 + 15 题严谨性）
 │   ├── processed/              # 处理后数据（条文 330 条、SFT 3960+440 条）
 │   └── raw/                    # 原始数据（gitignored）
 ├── tests/                      # 测试（68 单元 + 6 集成）
