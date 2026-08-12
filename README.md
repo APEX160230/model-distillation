@@ -136,7 +136,8 @@ python -m src.serve.main
 │   ├── cloud_training_guide.html # 云端训练指南
 │   ├── feasibility-report.md   # 可行性验证报告
 │   ├── p1_eval_report.html     # P1 评测报告
-│   └── p2_eval_report.html     # P2 评测报告
+│   ├── p2_eval_report.html     # P2 评测报告
+│   └── archive/plans/          # 历史实现计划归档（M1/M2）
 ├── src/                        # 源代码
 │   ├── data/                   # 数据处理
 │   │   ├── extract.py          # PDF 批量提取 + 质量报告
@@ -173,6 +174,7 @@ python -m src.serve.main
 │   ├── deploy.sh               # CI/CD 部署脚本
 │   ├── extract_sft_from_pdf.py # SFT 数据提取（4400 条）
 │   ├── refine_sft_data.py      # SFT 数据精修
+│   ├── legacy/                 # 历史验证脚本（探路版，见说明）
 │   └── ...                     # 评测、转换、合并等
 ├── data/                       # 数据
 │   ├── eval/                   # 评测集（50 题 + 10 题真实场景）
@@ -184,6 +186,8 @@ python -m src.serve.main
 ├── Modelfile                   # Ollama 模型模板
 └── README.md
 ```
+
+**归档说明**：项目早期的探路验证脚本（原 `data/` 下的 3 个脚本）已归档至 `scripts/legacy/`，历史实现计划（原 `docs/superpowers/plans/`）已归档至 `docs/archive/plans/`，仅作过程参考；git 历史中保留完整版本。
 
 ## 三阶段渐进规划
 
