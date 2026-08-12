@@ -17,8 +17,8 @@ jobs:
     name: 单元+集成测试
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -34,8 +34,8 @@ jobs:
     name: 脚本校验+前端冒烟
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: 脚本语法校验
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 执行部署脚本
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
