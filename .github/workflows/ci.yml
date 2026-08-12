@@ -1,0 +1,84 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── ① 单元 + 集成测试（核心质量门） ──
+  test:
+    name: 单元+集成测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: 安装 CPU torch（避免下载 2.5GB CUDA 版）
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: 安装项目依赖
+        run: pip install -e ".[rag,serve,dev]"
+      - name: 运行测试
+        run: pytest tests/unit tests/integration -q --no-header
+
+  # ── ② 脚本校验 + 前端冒烟（轻量快速） ──
+  check:
+    name: 脚本校验+前端冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 脚本语法校验
+        run: |
+          python -m py_compile $(find scripts -name "*.py")
+          echo "✅ 全部脚本语法通过"
+      - name: 前端冒烟
+        run: |
+          python - <<'EOF'
+          import pathlib
+          html = pathlib.Path("src/serve/frontend.html").read_text(encoding="utf-8")
+          for ep in ("/api/chat", "/api/examples", "/api/health"):
+              assert ep in html, f"前端缺少端点 {ep}"
+          assert "伤寒论" in html, "前端缺少标题关键词"
+          print(f"✅ 前端冒烟通过：{len(html)} bytes，3 个 API 端点齐全")
+          EOF
+      - name: 数据资产完整性
+        run: |
+          python - <<'EOF'
+          import pathlib
+          required = [
+              "data/processed/classics/shanghan_clauses.jsonl",
+              "data/eval/eval_50.jsonl",
+              "Modelfile",
+              "src/serve/api.py",
+          ]
+          for p in required:
+              assert pathlib.Path(p).exists(), f"缺少 {p}"
+              print(f"✅ {p}")
+          EOF
+
+  # ── ③ CD：push main 且测试通过后自动部署 ──
+  deploy:
+    name: 部署到 zzy1n.cc
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, check]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: 执行部署脚本
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: bash scripts/deploy.sh
