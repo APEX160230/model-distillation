@@ -3,12 +3,48 @@
 TDD: 先写失败测试，再实现 src/rag/retrieve.py
 """
 import json
-import tempfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from src.rag.retrieve import VectorRetriever
+
+
+class FakeEmbedder:
+    """确定性假嵌入器（CI 无网络时替代真实 bge 模型）
+
+    基于关键词匹配构造 one-hot 风格向量：
+    - 语义测试（桂枝汤→第12条、麻黄汤→第35条）通过关键词命中近似保持
+    - 完全确定性，无网络/模型依赖
+    """
+
+    KEYWORDS = ["桂枝", "麻黄", "太阳", "中风", "伤寒", "脉浮", "发热", "恶寒"]
+
+    def __init__(self, dim: int = 8):
+        self._dim = dim
+
+    def encode(self, text: str) -> np.ndarray:
+        return self.encode_batch([text])[0]
+
+    def encode_batch(self, texts: list[str]) -> np.ndarray:
+        vecs = []
+        for t in texts:
+            v = np.zeros(self._dim, dtype=np.float32)
+            for i, kw in enumerate(self.KEYWORDS[: self._dim]):
+                if kw in t:
+                    v[i] = 1.0
+            if v.sum() == 0:
+                v[0] = 0.1  # 无关键词命中时给微弱基线，避免零向量
+            vecs.append(v)
+        return np.stack(vecs)
+
+
+def make_retriever(tmp_path, embedder=None, **kwargs):
+    """构造检索器，默认注入假嵌入器（不下载真实模型）"""
+    kwargs.setdefault("persist_dir", str(tmp_path / "chroma"))
+    kwargs.setdefault("embedder", embedder or FakeEmbedder())
+    return VectorRetriever(**kwargs)
 
 
 @pytest.fixture
@@ -38,12 +74,12 @@ class TestRetrieverInit:
 
     def test_init_with_persist_dir(self, tmp_path):
         """指定持久化目录初始化"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         assert retriever.persist_dir.exists()
 
     def test_init_default_collection_name(self, tmp_path):
         """默认 collection 名为 shanghan"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         assert retriever.collection_name == "shanghan"
 
 
@@ -52,20 +88,20 @@ class TestBuildIndex:
 
     def test_build_from_jsonl(self, sample_clauses, tmp_path):
         """从 JSONL 文件建库"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         assert retriever.count() == 5
 
     def test_build_idempotent(self, sample_clauses, tmp_path):
         """重复建库不翻倍"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         retriever.build_index(str(sample_clauses))
         assert retriever.count() == 5
 
     def test_build_stores_metadata(self, sample_clauses, tmp_path):
         """建库后存储 clause_id 和 chapter 元数据"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         results = retriever.query("太阳病", top_k=1)
         assert len(results) == 1
@@ -81,14 +117,14 @@ class TestQuery:
 
     def test_query_returns_top_k(self, sample_clauses, tmp_path):
         """查询返回 top_k 条结果"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         results = retriever.query("太阳病", top_k=3)
         assert len(results) == 3
 
     def test_query_results_sorted_by_score(self, sample_clauses, tmp_path):
         """结果按相似度降序排列"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         results = retriever.query("太阳病", top_k=5)
         scores = [r.score for r in results]
@@ -96,21 +132,21 @@ class TestQuery:
 
     def test_query桂枝汤_retrieves_correct_clause(self, sample_clauses, tmp_path):
         """查询桂枝汤应返回第 12 条"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         results = retriever.query("桂枝汤主治什么", top_k=1)
         assert results[0].clause_id == 12
 
     def test_query麻黄汤_retrieves_correct_clause(self, sample_clauses, tmp_path):
         """查询麻黄汤应返回第 35 条"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         retriever.build_index(str(sample_clauses))
         results = retriever.query("麻黄汤主治什么", top_k=1)
         assert results[0].clause_id == 35
 
     def test_query_empty_raises(self, tmp_path):
         """空查询抛出 ValueError"""
-        retriever = VectorRetriever(persist_dir=str(tmp_path / "chroma"))
+        retriever = make_retriever(tmp_path)
         with pytest.raises(ValueError, match="empty"):
             retriever.query("", top_k=3)
 
@@ -123,12 +159,12 @@ class TestPersist:
         persist_dir = str(tmp_path / "chroma")
 
         # 第一次: 建库
-        r1 = VectorRetriever(persist_dir=persist_dir)
+        r1 = make_retriever(tmp_path, persist_dir=persist_dir)
         r1.build_index(str(sample_clauses))
         assert r1.count() == 5
 
         # 第二次: 重新加载
-        r2 = VectorRetriever(persist_dir=persist_dir)
+        r2 = make_retriever(tmp_path, persist_dir=persist_dir)
         assert r2.count() == 5
         results = r2.query("太阳病脉浮", top_k=1)
         assert len(results) == 1

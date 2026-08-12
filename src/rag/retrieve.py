@@ -58,12 +58,14 @@ class VectorRetriever:
         self,
         persist_dir: str = "data/chroma",
         collection_name: str = "shanghan",
+        embedder: Embedder | None = None,
     ):
         self.persist_dir = Path(persist_dir)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
         self.collection_name = collection_name
 
-        self._embedder = Embedder()
+        # 支持依赖注入（测试传入假嵌入器，避免 CI 下载真实模型）
+        self._embedder = embedder or Embedder()
         self._client = chromadb.PersistentClient(
             path=str(self.persist_dir),
             settings=Settings(anonymized_telemetry=False),
