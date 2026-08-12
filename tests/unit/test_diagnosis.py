@@ -89,6 +89,12 @@ class TestDiagnose:
         assert r.status == "need_clarification"
         assert "出汗" in r.question
 
+    def test_single_symptom_asks_generic_not_rejected(self):
+        """单症状但无匹配鉴别问题（往来寒热→少阳）→ 通用追问而非拒答"""
+        r = self.engine.diagnose("一阵冷一阵热，胸口发闷")
+        assert r.status == "need_clarification"
+        assert r.question is not None
+
     def test_rejected_when_no_syndrome_match(self):
         """图谱外症状 → 低置信拒答"""
         r = self.engine.diagnose("我耳鸣，听力下降")

@@ -133,11 +133,29 @@ class DiagnosisEngine:
                 reason="症状信息不足，需要进一步确认。",
             )
 
+        # 无匹配鉴别问题 → 通用追问（引导补充典型症状），不拒答
+        generic = self._generic_question(top_syndromes)
         return DiagnosisResult(
-            status="rejected",
+            status="need_clarification",
             evidence=evidence,
-            reason="这个情况我不太确定，建议咨询专业中医师或前往医院就诊。",
+            question=generic,
+            options=[],
+            reason="症状信息不足，需要进一步确认。",
         )
+
+    def _generic_question(self, top_syndromes: list[str]) -> str:
+        """构造通用追问：列出候选证型的典型症状引导用户补充"""
+        hints: list[str] = []
+        for t in top_syndromes[:2]:
+            for s, candidates in SYMPTOM_SYNDROME.items():
+                if t in candidates and s not in hints:
+                    hints.append(s)
+                if len(hints) >= 6:
+                    break
+            if len(hints) >= 6:
+                break
+        hint_text = "、".join(hints) if hints else "其他不适"
+        return f"能再详细说说您还有哪些不舒服吗？比如：{hint_text} 等表现。"
 
     def _pick_question(self, top_syndromes: list[str]) -> dict | None:
         """选择能区分当前候选证型的鉴别问题"""
