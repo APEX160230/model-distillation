@@ -21,19 +21,32 @@ chmod 600 ~/.ssh/tcm_deploy_key
 SSH="ssh -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
 SCP="scp -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
 
-echo "==> [1/5] 上传源码 src/"
+echo "==> [1/6] 上传源码 src/"
 $SCP -r src "$USER@$HOST:/home/ubuntu/tcm/backend/"
 
-echo "==> [2/5] 上传数据资产（chroma 向量库 + 条文数据）"
-$SCP -r data/chroma data/processed "$USER@$HOST:/home/ubuntu/tcm/backend/data/"
+echo "==> [2/6] 上传数据资产（条文数据 + 重建脚本；chroma 向量库为可重建资产，服务器端重建）"
+$SCP -r data/processed "$USER@$HOST:/home/ubuntu/tcm/backend/data/"
+$SSH "$USER@$HOST" "mkdir -p /home/ubuntu/tcm/backend/scripts"
+$SCP scripts/build_chroma.py "$USER@$HOST:/home/ubuntu/tcm/backend/scripts/"
 
-echo "==> [3/5] 上传 Modelfile"
+echo "==> [3/6] 上传 Modelfile"
 $SCP Modelfile "$USER@$HOST:/home/ubuntu/tcm/"
 
-echo "==> [4/5] 重启 tcm-backend 服务"
+echo "==> [4/6] 条文变更时重建向量库（幂等，未变更则跳过）"
+SRC_MD5=$(md5sum data/processed/classics/shanghan_clauses.jsonl | awk '{print $1}')
+NEED_REBUILD=$($SSH "$USER@$HOST" "mark=/home/ubuntu/tcm/backend/data/chroma/.source_md5; if [ -f \"\$mark\" ] && [ \"\$(cat \"\$mark\")\" = \"$SRC_MD5\" ]; then echo 0; else echo 1; fi")
+if [ "$NEED_REBUILD" = "1" ]; then
+    echo "条文数据已变更，重建 chroma（约 1-2 分钟）..."
+    # 优先用服务器本地 bge 模型（hf-mirror 的 HEAD 请求有 bug，huggingface_hub 下载不可靠）
+    $SSH "$USER@$HOST" "cd /home/ubuntu/tcm/backend && if [ -d /home/ubuntu/tcm/models/bge-small-zh-v1.5 ]; then /usr/bin/python3 scripts/build_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5; else /usr/bin/python3 scripts/build_chroma.py; fi && echo $SRC_MD5 > data/chroma/.source_md5"
+else
+    echo "条文数据未变更，跳过重建"
+fi
+
+echo "==> [5/6] 重启 tcm-backend 服务"
 $SSH "$USER@$HOST" "sudo systemctl restart tcm-backend"
 
-echo "==> [5/5] 健康检查"
+echo "==> [6/6] 健康检查"
 sleep 12
 echo "--- 内网 health ---"
 $SSH "$USER@$HOST" "curl -s -m 5 http://127.0.0.1:8002/api/health" | head -c 300
