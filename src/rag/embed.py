@@ -45,7 +45,17 @@ class Embedder:
         vecs = emb.encode_batch(["桂枝汤主之", "麻黄汤主之"])
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-small-zh-v1.5"):
+    def __init__(self, model_name: str | None = None):
+        """初始化嵌入器
+
+        Args:
+            model_name: 模型名或本地模型目录路径。为 None 时读取环境变量
+                ``TCM_EMBED_MODEL``（生产环境用绝对路径指向本地模型目录，
+                避免服务进程在线访问 HuggingFace），未设置则回退默认
+                ``BAAI/bge-small-zh-v1.5``。
+        """
+        if model_name is None:
+            model_name = os.environ.get("TCM_EMBED_MODEL", "BAAI/bge-small-zh-v1.5")
         self.model_name = model_name
 
     @property
