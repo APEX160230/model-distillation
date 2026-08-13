@@ -13,6 +13,10 @@ from typing import Any, Iterator
 import requests
 
 from src.rag.retrieve import RetrievalResult
+from src.data.symptom_mapping import (
+    SYNDROME_SUGGESTIONS,
+    SEEK_CARE_GUIDANCE,
+)
 
 SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。
 请用口语化的讲解风格，像老师讲课一样回答问题，同时保持正式得体。
@@ -155,15 +159,29 @@ def build_diagnosis_full_answer(
     docs: list[RetrievalResult] | None = None,
     lectures: list[dict] | None = None,
 ) -> str:
-    """完整三层辨证回答（全部代码生成，不经模型）
+    """完整辨证回答（全部代码生成，不经模型）
 
-    第一层【辨证方向】/第二层【类方思路】来自图谱结论模板，
-    第三层【倪师讲解】为讲稿原文直引。严谨性 100%，无幻觉空间。
+    五层结构（用户真实诉求"我能怎么办"的核心答案）：
+    1. 【辨证方向】图谱结论 + 依据（学术判断）
+    2. 【类方思路】类方标签 + 免责（不构成用药建议）
+    3. 【倪师讲解】讲稿原文直引（学术依据）
+    4. 【调理建议】基于证型的通用生活建议（用户最需要——"我该怎么办"）
+    5. 【就医引导】什么情况必须就医
+
+    前 3 层是"知识/判断"，第 4 层是"建议"（锚点理论扩展：
+    通用生活建议是中医常识，不涉及方药剂量，模板生成零幻觉）。
+    严谨性 100%——所有内容均来自代码模板或讲稿原文，无模型生成。
     """
     layers = [
         build_diagnosis_template(diagnosis, docs),
         build_lecture_layer(lectures, docs),
     ]
+    syndrome = diagnosis.get("syndrome", "")
+    suggestions = SYNDROME_SUGGESTIONS.get(syndrome, [])
+    if suggestions:
+        items = "；".join(suggestions)
+        layers.append(f"【调理建议】\n{items}")
+    layers.append(f"【就医引导】\n{SEEK_CARE_GUIDANCE}")
     return "\n\n".join(layers) + DIAGNOSIS_DISCLAIMER
 
 

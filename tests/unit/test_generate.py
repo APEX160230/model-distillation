@@ -179,6 +179,28 @@ class TestFormatContextExtras:
         assert "【第35条】" in result
         assert "麻黄汤主之" in result
 
+    def test_full_answer_includes_lifestyle_suggestions(self):
+        """完整回答含【调理建议】+【就医引导】层（用户最需要的'建议'）"""
+        from src.rag.generate import build_diagnosis_full_answer
+        result = build_diagnosis_full_answer(
+            diagnosis={"syndrome": "太阳伤寒", "brief": "外感寒邪", "family": "麻黄汤类方", "evidence": ["头痛", "无汗"]},
+            lectures=[],
+        )
+        assert "【调理建议】" in result
+        assert "保暖" in result
+        assert "【就医引导】" in result
+        assert "就医" in result
+
+    def test_full_answer_no_suggestions_for_unknown_syndrome(self):
+        """无映射的证型不显示建议占位（但就医引导仍显示）"""
+        from src.rag.generate import build_diagnosis_full_answer
+        result = build_diagnosis_full_answer(
+            diagnosis={"syndrome": "未知证型", "brief": "", "family": "", "evidence": []},
+            lectures=[],
+        )
+        assert "【调理建议】" not in result
+        assert "【就医引导】" in result
+
     def test_formula_compositions_rendered(self):
         extras = {
             "formula_compositions": [
