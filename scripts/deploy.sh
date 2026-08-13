@@ -18,8 +18,8 @@ mkdir -p ~/.ssh
 printf '%s\n' "$SSH_KEY" > ~/.ssh/tcm_deploy_key
 chmod 600 ~/.ssh/tcm_deploy_key
 
-SSH="ssh -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
-SCP="scp -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15"
+SSH="ssh -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+SCP="scp -i ~/.ssh/tcm_deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
 
 echo "==> [1/6] 上传源码 src/"
 $SCP -r src "$USER@$HOST:/home/ubuntu/tcm/backend/"
@@ -47,8 +47,10 @@ echo "==> [4b/6] 讲稿数据变更时重建讲稿库（FR4，幂等）"
 LEC_MD5=$(md5sum data/processed/sft_train_final.jsonl | awk '{print $1}')
 LEC_NEED=$($SSH "$USER@$HOST" "mark=/home/ubuntu/tcm/backend/data/chroma/.lecture_source_md5; if [ -f \"\$mark\" ] && [ \"\$(cat \"\$mark\")\" = \"$LEC_MD5\" ]; then echo 0; else echo 1; fi")
 if [ "$LEC_NEED" = "1" ]; then
-    echo "讲稿数据已变更，重建讲稿库（约 1-2 分钟）..."
-    $SSH "$USER@$HOST" "cd /home/ubuntu/tcm/backend && if [ -d /home/ubuntu/tcm/models/bge-small-zh-v1.5 ]; then /usr/bin/python3 scripts/build_lecture_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5; else /usr/bin/python3 scripts/build_lecture_chroma.py; fi && echo $LEC_MD5 > data/chroma/.lecture_source_md5"
+    echo "讲稿数据已变更，重建讲稿库（2核CPU约2-5分钟）..."
+    # 讲稿库为增强资产：失败不阻塞部署（可降级），失败时不写 md5，下轮部署重试
+    $SSH "$USER@$HOST" "cd /home/ubuntu/tcm/backend && if [ -d /home/ubuntu/tcm/models/bge-small-zh-v1.5 ]; then /usr/bin/python3 scripts/build_lecture_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5; else /usr/bin/python3 scripts/build_lecture_chroma.py; fi && echo $LEC_MD5 > data/chroma/.lecture_source_md5" \
+        || echo "⚠️ 讲稿库重建失败，本次部署跳过（服务可正常降级运行）"
 else
     echo "讲稿数据未变更，跳过重建"
 fi
