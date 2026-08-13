@@ -900,17 +900,18 @@
                             bubble._route = data.route_type;
                             bubble._extras = data.context_extras;
                             bubble._question = question;
-                            // PRD v3.0：辨证追问 → 渲染选择题卡片，不再展示流式内容
+                            // PRD v3.0：辨证追问 → 占位标记，下一个 chunk 事件渲染追问卡片
                             const diag = (data.context_extras || {}).diagnosis;
                             if (diag && diag.status === 'need_clarification') {
                                 bubble._clarify = true;
-                                bubble.innerHTML = (data.route_type ? routeBadge(data.route_type) : '') +
-                                    '<div class="typing"><span></span><span></span><span></span></div>';
-                                return;
+                                // 不 return — 让后续 chunk 事件正常处理并渲染追问卡片
                             }
                         } else if (data.type === 'chunk') {
+                            if (bubble._answerDone) {
+                                // 追问卡片已渲染，忽略后续多余 chunk
+                                continue;
+                            }
                             if (bubble._clarify) {
-                                // 追问场景：流式内容就是问题文本，直接替换为追问卡片
                                 bubble._clarify = false;
                                 bubble.innerHTML = (bubble._route ? routeBadge(bubble._route) : '');
                                 const diag = (bubble._extras || {}).diagnosis;
