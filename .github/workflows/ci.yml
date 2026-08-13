@@ -47,10 +47,11 @@ jobs:
           python - <<'EOF'
           import pathlib
           html = pathlib.Path("src/serve/frontend.html").read_text(encoding="utf-8")
-          for ep in ("/api/chat", "/api/examples", "/api/health"):
-              assert ep in html, f"前端缺少端点 {ep}"
-          assert "伤寒论" in html, "前端缺少标题关键词"
-          print(f"✅ 前端冒烟通过：{len(html)} bytes，3 个 API 端点齐全")
+          # 极简版前端只调用对话端点；其余通过 /api/health 由服务端提供
+          assert "/api/chat" in html, "前端缺少对话端点"
+          assert "倪师辨证助手" in html, "前端缺少品牌标题"
+          assert "fetch('/api/chat'" in html, "前端缺少对话请求逻辑"
+          print(f"✅ 前端冒烟通过：{len(html)} bytes，对话端点齐全")
           EOF
       - name: 数据资产完整性
         run: |
