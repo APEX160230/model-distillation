@@ -108,6 +108,7 @@ class RAGPipeline:
         self._generator = generator or Generator(model=model)
         self._top_k = top_k
         self._diagnosis = DiagnosisEngine()
+        self._lecture_retriever = None  # FR4 讲稿库（build_lecture_chroma 构建，可选）
 
     def retrieve(self, question: str) -> list[RetrievalResult]:
         """仅检索，不生成"""
@@ -162,11 +163,12 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
-        # PRD v3.0：辨证成功 → 辨证结论注入上下文（三层生成）
+        # PRD v3.0：辨证成功 → 辨证结论注入上下文 + 讲稿素材
         if diagnosis_engine and diagnosis.status == "diagnosed":
             if context_extras is None:
                 context_extras = {}
             context_extras["diagnosis"] = diagnosis.to_dict()
+            self._inject_lectures(question, context_extras)
 
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
@@ -262,11 +264,12 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
-        # PRD v3.0：辨证成功 → 辨证结论注入上下文
+        # PRD v3.0：辨证成功 → 辨证结论注入上下文 + 讲稿素材
         if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
             if context_extras is None:
                 context_extras = {}
             context_extras["diagnosis"] = diagnosis.to_dict()
+            self._inject_lectures(question, context_extras)
 
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
@@ -311,6 +314,30 @@ class RAGPipeline:
         yield template + "\n\n"
         for chunk in stream:
             yield chunk
+
+    def _inject_lectures(self, question: str, context_extras: dict[str, Any]) -> None:
+        """FR4: 检索倪师讲稿素材注入上下文（第三层讲解引用倪师原话）
+
+        讲稿库（collection: lectures）由 scripts/build_lecture_chroma.py 构建。
+        不可用（未构建/异常）时静默跳过，不影响主链路。
+        """
+        lecture_retriever = getattr(self, "_lecture_retriever", None)
+        if not lecture_retriever:
+            return
+        try:
+            hits = lecture_retriever.query(question, top_k=3)
+            if hits:
+                context_extras["lectures"] = [
+                    {
+                        "book": h.metadata.get("book", ""),
+                        "topic": h.metadata.get("topic", ""),
+                        "text": h.text,
+                    }
+                    for h in hits
+                ]
+        except Exception:
+            # 讲稿库不可用时静默降级（条文检索与辨证链路不受影响）
+            pass
 
     @property
     def retriever(self):

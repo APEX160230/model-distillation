@@ -137,6 +137,62 @@ class VectorRetriever:
             metadatas=metadatas,
         )
 
+    def build_lecture_index(
+        self,
+        jsonl_path: str,
+        text_field: str = "output",
+        id_prefix: str = "lect",
+    ) -> None:
+        """从讲稿 JSONL 构建讲稿向量库（PRD v3.0 §5 FR4）
+
+        讲稿素材格式（SFT 数据同源）：每行含 instruction/input/output/book。
+        - document = output（倪师讲解原文）
+        - metadata = {book, topic=instruction 前 40 字, source}
+
+        Args:
+            jsonl_path: 讲稿 JSONL 路径
+            text_field: 作为检索文本的字段（默认 output）
+            id_prefix: 文档 id 前缀
+        """
+        lectures = []
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    lectures.append(json.loads(line))
+
+        if not lectures:
+            raise ValueError(f"No lectures found in {jsonl_path}")
+
+        # 幂等: 先删除已有 collection 再重建
+        try:
+            self._client.delete_collection(self.collection_name)
+        except Exception:
+            pass
+        self._collection = self._client.get_or_create_collection(
+            name=self.collection_name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
+        texts = [lec.get(text_field, "") for lec in lectures]
+        ids = [f"{id_prefix}_{i}" for i in range(len(lectures))]
+        metadatas = []
+        for lec in lectures:
+            topic = (lec.get("instruction", "") or "")[:40]
+            metadatas.append({
+                "book": lec.get("book", ""),
+                "topic": topic,
+                "source": lec.get("source", "lecture"),
+            })
+
+        embeddings = self._embedder.encode_batch(texts)
+        self.collection.add(
+            ids=ids,
+            embeddings=embeddings.tolist(),
+            documents=texts,
+            metadatas=metadatas,
+        )
+
     def query(self, text: str, top_k: int = 5) -> list[RetrievalResult]:
         """检索 top-k 最相似的条辨
 

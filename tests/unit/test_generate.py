@@ -133,6 +133,23 @@ class TestApplySafetyFilter:
 class TestFormatContextExtras:
     """P0-4: 症状→证候→方剂路径注入组成"""
 
+    def test_lectures_rendered(self):
+        """FR4: 倪师讲稿素材渲染进上下文"""
+        extras = {
+            "lectures": [
+                {"book": "伤寒", "topic": "太阳伤寒讲解",
+                 "text": "太阳伤寒是寒邪束表，毛孔紧闭，汗发不出来。"},
+            ]
+        }
+        result = format_context_extras(extras)
+        assert "【倪师讲稿】" in result
+        assert "《伤寒》" in result
+        assert "太阳伤寒是寒邪束表" in result
+
+    def test_lectures_skipped_when_empty(self):
+        """空讲稿素材不渲染"""
+        assert format_context_extras({"lectures": []}) == ""
+
     def test_formula_compositions_rendered(self):
         extras = {
             "formula_compositions": [

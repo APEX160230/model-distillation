@@ -180,6 +180,21 @@ def format_context_extras(extras: dict[str, Any] | None) -> str:
         if family:
             parts.append(f"类方思路：传统多从「{family}」思路考虑（仅作知识参考，不构成用药建议）")
 
+    # 倪师讲稿素材（FR4：第三层讲解引用倪师原话）
+    lectures = extras.get("lectures")
+    if lectures:
+        parts.append("【倪师讲稿】（倪海厦讲课原文，引用时原文照抄，剂量记载省略不引用）")
+        for lec in lectures:
+            text = (lec.get("text", "") or "").strip()[:200]
+            if not text:
+                continue
+            book = lec.get("book", "")
+            topic = lec.get("topic", "")
+            prefix = f"《{book}》" if book else ""
+            if topic:
+                prefix += f"「{topic}」"
+            parts.append(f"{prefix}：{text}")
+
     # 超范围标记
     out_of_scope = extras.get("out_of_scope")
     if out_of_scope:

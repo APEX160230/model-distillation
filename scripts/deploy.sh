@@ -27,7 +27,7 @@ $SCP -r src "$USER@$HOST:/home/ubuntu/tcm/backend/"
 echo "==> [2/6] 上传数据资产（条文数据 + 重建脚本；chroma 向量库为可重建资产，服务器端重建）"
 $SCP -r data/processed "$USER@$HOST:/home/ubuntu/tcm/backend/data/"
 $SSH "$USER@$HOST" "mkdir -p /home/ubuntu/tcm/backend/scripts"
-$SCP scripts/build_chroma.py "$USER@$HOST:/home/ubuntu/tcm/backend/scripts/"
+$SCP scripts/build_chroma.py scripts/build_lecture_chroma.py "$USER@$HOST:/home/ubuntu/tcm/backend/scripts/"
 
 echo "==> [3/6] 上传 Modelfile"
 $SCP Modelfile "$USER@$HOST:/home/ubuntu/tcm/"
@@ -41,6 +41,16 @@ if [ "$NEED_REBUILD" = "1" ]; then
     $SSH "$USER@$HOST" "cd /home/ubuntu/tcm/backend && if [ -d /home/ubuntu/tcm/models/bge-small-zh-v1.5 ]; then /usr/bin/python3 scripts/build_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5; else /usr/bin/python3 scripts/build_chroma.py; fi && echo $SRC_MD5 > data/chroma/.source_md5"
 else
     echo "条文数据未变更，跳过重建"
+fi
+
+echo "==> [4b/6] 讲稿数据变更时重建讲稿库（FR4，幂等）"
+LEC_MD5=$(md5sum data/processed/sft_train_final.jsonl | awk '{print $1}')
+LEC_NEED=$($SSH "$USER@$HOST" "mark=/home/ubuntu/tcm/backend/data/chroma/.lecture_source_md5; if [ -f \"\$mark\" ] && [ \"\$(cat \"\$mark\")\" = \"$LEC_MD5\" ]; then echo 0; else echo 1; fi")
+if [ "$LEC_NEED" = "1" ]; then
+    echo "讲稿数据已变更，重建讲稿库（约 1-2 分钟）..."
+    $SSH "$USER@$HOST" "cd /home/ubuntu/tcm/backend && if [ -d /home/ubuntu/tcm/models/bge-small-zh-v1.5 ]; then /usr/bin/python3 scripts/build_lecture_chroma.py --model /home/ubuntu/tcm/models/bge-small-zh-v1.5; else /usr/bin/python3 scripts/build_lecture_chroma.py; fi && echo $LEC_MD5 > data/chroma/.lecture_source_md5"
+else
+    echo "讲稿数据未变更，跳过重建"
 fi
 
 echo "==> [5/6] 重启 tcm-backend 服务"

@@ -112,3 +112,45 @@ class TestPipelineDiagnosis:
         assert "【类方思路】" in full
         assert "麻黄汤类方" in full
         assert "讲解内容" in full
+
+    def test_diagnosed_injects_lectures(self):
+        """辨证成功时检索讲稿素材并注入 context_extras（FR4）"""
+        retriever = MagicMock()
+        retriever.query.return_value = [_mock_doc()]
+        retriever.last_route = None
+        retriever.last_context = {}
+        gen = MagicMock()
+        gen.generate.return_value = "讲解"
+        lecture_retriever = MagicMock()
+        lecture_retriever.query.return_value = [
+            SimpleNamespace(text="太阳伤寒是寒邪束表，毛孔紧闭。", metadata={"book": "伤寒", "topic": "太阳伤寒讲解"}),
+        ]
+        pipeline = self._make_pipeline(retriever=retriever, generator=gen)
+        pipeline._lecture_retriever = lecture_retriever
+
+        resp = pipeline.query("头痛怕冷不出汗")
+
+        extras = resp.context_extras or {}
+        lectures = extras.get("lectures", [])
+        assert len(lectures) == 1
+        assert lectures[0]["book"] == "伤寒"
+        assert lecture_retriever.query.called
+
+    def test_diagnosed_lecture_failure_silent(self):
+        """讲稿库不可用时静默跳过，不影响主链路"""
+        retriever = MagicMock()
+        retriever.query.return_value = [_mock_doc()]
+        retriever.last_route = None
+        retriever.last_context = {}
+        gen = MagicMock()
+        gen.generate.return_value = "讲解"
+        lecture_retriever = MagicMock()
+        lecture_retriever.query.side_effect = Exception("chroma 不可用")
+        pipeline = self._make_pipeline(retriever=retriever, generator=gen)
+        pipeline._lecture_retriever = lecture_retriever
+
+        resp = pipeline.query("头痛怕冷不出汗")
+
+        assert resp.answer  # 主链路不受影响
+        extras = resp.context_extras or {}
+        assert "lectures" not in extras or extras["lectures"] == []

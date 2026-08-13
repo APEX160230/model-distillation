@@ -49,6 +49,26 @@ def main():
         stats = pipeline.hybrid_retriever.graph_stats
         logger.info(f"知识图谱: {stats}")
 
+    # FR4: 挂载倪师讲稿检索器（复用 bge 实例；讲稿库未构建时静默跳过）
+    try:
+        from src.rag.retrieve import VectorRetriever
+        shared_embedder = None
+        if pipeline.hybrid_retriever:
+            shared_embedder = getattr(
+                pipeline.hybrid_retriever._vector, "_embedder", None)
+        lecture = VectorRetriever(
+            persist_dir="data/chroma",
+            collection_name="lectures",
+            embedder=shared_embedder,
+        )
+        if lecture.count() > 0:
+            pipeline._lecture_retriever = lecture
+            logger.info(f"讲稿库就绪: {lecture.count()} 条倪师讲稿片段")
+        else:
+            logger.info("讲稿库为空，跳过（可运行 scripts/build_lecture_chroma.py 构建）")
+    except Exception as e:
+        logger.warning(f"讲稿库不可用（跳过）: {e}")
+
     app = create_app(pipeline)
     logger.info(f"服务启动: http://0.0.0.0:{port}")
 
