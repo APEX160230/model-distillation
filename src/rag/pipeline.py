@@ -316,6 +316,8 @@ class RAGPipeline:
     def _inject_lectures(self, question: str, context_extras: dict[str, Any]) -> None:
         """FR4: 检索倪师讲稿素材注入上下文（第三层讲解引用倪师原话）
 
+        检索 query 用「证型 + 关键症状」构造（比用户原文更聚焦，
+        如「太阳伤寒 恶寒 无汗 头痛」→ 优先命中太阳伤寒相关讲解）。
         讲稿库（collection: lectures）由 scripts/build_lecture_chroma.py 构建。
         不可用（未构建/异常）时静默跳过，不影响主链路。
         """
@@ -323,7 +325,11 @@ class RAGPipeline:
         if not lecture_retriever:
             return
         try:
-            hits = lecture_retriever.query(question, top_k=3)
+            diag = context_extras.get("diagnosis", {})
+            syndrome = diag.get("syndrome", "")
+            evidence = diag.get("evidence", [])
+            query = " ".join(filter(None, [syndrome] + evidence)) or question
+            hits = lecture_retriever.query(query, top_k=3)
             if hits:
                 context_extras["lectures"] = [
                     {
