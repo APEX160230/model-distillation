@@ -120,6 +120,12 @@ class TestApplySafetyFilter:
         assert once.count("不构成诊疗建议") == 1
         assert twice.count("不构成诊疗建议") == 1
 
+    def test_prescribing_action_triggers_disclaimer(self):
+        """给病人开药/吃点药等处方动作语气 → 追加免责（线上实测暴露）"""
+        for bad in ["你给病人吃点药", "可以开点药吃", "给你开个药", "建议用药治疗"]:
+            result = apply_safety_filter(bad)
+            assert "不构成诊疗建议" in result, bad
+
     def test_empty_answer(self):
         assert apply_safety_filter("") == ""
 
