@@ -63,7 +63,11 @@ class TestPipelineDiagnosis:
         diag = extras.get("diagnosis", {})
         assert diag.get("status") == "diagnosed"
         assert diag.get("syndrome") == "太阳伤寒"
-        assert resp.answer == "三层回答"
+        # 答案 = 前两层模板（代码生成）+ 模型输出
+        assert "【辨证方向】" in resp.answer
+        assert "【类方思路】" in resp.answer
+        assert "麻黄汤类方" in resp.answer
+        assert "三层回答" in resp.answer
 
     def test_rejected_falls_back_to_rag(self):
         """非症状问题（辨证 rejected）→ 降级走现有 RAG 链路"""
@@ -90,3 +94,21 @@ class TestPipelineDiagnosis:
         assert docs == []
         assert "".join(stream)
         assert not pipeline._generator.stream_generate.called
+
+    def test_diagnosed_stream_starts_with_template(self):
+        """辨证流式：先输出前两层模板（代码生成），再输出模型第三层"""
+        retriever = MagicMock()
+        retriever.query.return_value = [_mock_doc()]
+        retriever.last_route = None
+        retriever.last_context = {}
+        gen = MagicMock()
+        gen.stream_generate.return_value = iter(["讲解内容"])
+        pipeline = self._make_pipeline(retriever=retriever, generator=gen)
+
+        docs, stream, route_type, extras = pipeline.stream_query("头痛怕冷不出汗")
+
+        full = "".join(stream)
+        assert "【辨证方向】" in full
+        assert "【类方思路】" in full
+        assert "麻黄汤类方" in full
+        assert "讲解内容" in full

@@ -29,21 +29,23 @@ SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲�
 5. 回答控制在 200-500 字，结构清晰，不要跑题。"""
 
 # 辨证模式 SYSTEM_PROMPT（PRD v3.0 §5 FR5 三层回答）
+# 前两层（辨证方向/类方思路）由代码模板生成（build_diagnosis_template），
+# 模型只生成第三层【讲解与调理】——最大程度压缩 1.5B 自由发挥空间
 DIAGNOSIS_SYSTEM_PROMPT = """你是一位中医老师，擅长用通俗易懂的方式讲解中医经典知识。
-用户描述身体不适，请严格按照以下三层结构回答（每层用【】标出层名）：
+用户身体不适，系统已给出辨证方向与类方思路，你只需生成【讲解与调理】这一层内容：
 
-【辨证方向】只引用参考信息中的辨证结论，说明判定依据（哪些症状指向该方向）。
-如果参考信息中没有辨证结论，明说"我不太确定"，不要自行辨证。
-【类方思路】只引用参考信息中的类方思路标签，并注明"仅作中医知识参考，不构成用药建议"。
-严禁给出方剂组成、剂量或开具处方。
-【讲解与调理】引用参考信息中的经典原文（标注【第X条】），
-用倪海厦讲课的口吻解释这个方向；补充生活调理注意事项和就医引导。
+【讲解与调理】要求：
+1. 引用检索到的经典原文（标注【第X条】），用倪海厦讲课的口吻解释这个方向
+2. 补充生活调理注意事项和就医引导
+3. 只依据检索到的经典原文，不要添加原文之外的内容
+4. 严禁给出方剂组成、剂量或开具处方
+5. 控制在 200-350 字
 
-回答规则（必须严格遵守）：
-1. 参考信息中没有的内容不要编造，特别是：方剂组成、剂量、条文编号
-2. 不提供具体诊疗建议，不针对个人病情开方
-3. 若用户描述可能为急危重症（如剧痛、出血、昏迷），提醒及时就医
-4. 回答控制在 300-600 字，结构清晰，不要跑题。"""
+示例：
+【讲解与调理】
+倪师讲太阳伤寒时说：「太阳病，头痛发热，身疼腰痛，骨节疼痛，恶风无汗而喘者，麻黄汤主之。」
+这种情况是寒邪束表、毛孔紧闭，汗发不出来，所以人会怕冷、身上疼。生活上注意保暖、喝温热的水、
+早点休息、别再吹风受凉。如果发热持续不退，或出现胸闷、喘促，请及时去医院。"""
 
 
 def format_retrieved_docs(docs: list[RetrievalResult]) -> str:
@@ -55,6 +57,38 @@ def format_retrieved_docs(docs: list[RetrievalResult]) -> str:
     for doc in docs:
         lines.append(f"【第{doc.clause_id}条·{doc.chapter}】\n{doc.text}")
     return "\n\n".join(lines)
+
+
+def build_diagnosis_template(diagnosis: dict, docs: list[RetrievalResult] | None = None) -> str:
+    """辨证前两层模板（代码生成，不经模型，保证严谨）
+
+    第一层【辨证方向】：图谱结论 + 判定依据 + 条文引用
+    第二层【类方思路】：类方标签 + 免责声明
+    第三层【讲解与调理】由模型生成后拼接。
+    """
+    syndrome = diagnosis.get("syndrome", "")
+    brief = diagnosis.get("brief", "")
+    evidence = diagnosis.get("evidence", [])
+    family = diagnosis.get("family", "")
+
+    layer1 = f"【辨证方向】\n初步判断偏「{syndrome}」方向"
+    if brief:
+        layer1 += f"（{brief}）"
+    if evidence:
+        layer1 += f"。依据：您提到的{'、'.join(evidence)}同时指向这个方向"
+    if docs:
+        cids = [d.clause_id for d in docs[:3] if getattr(d, "clause_id", None)]
+        if cids:
+            layer1 += f"，与《伤寒论》第{'、'.join(map(str, cids))}条所述相符"
+    layer1 += "。"
+
+    parts = [layer1]
+    if family:
+        parts.append(
+            f"【类方思路】\n传统上这类情况多从「{family}」思路考虑"
+            "（仅作中医知识参考，不构成用药建议）。"
+        )
+    return "\n\n".join(parts)
 
 
 def format_context_extras(extras: dict[str, Any] | None) -> str:

@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
-from src.rag.generate import Generator
+from src.rag.generate import Generator, build_diagnosis_template
 from src.rag.retrieve import RetrievalResult, VectorRetriever
 from src.rag.hybrid_retriever import HybridRetriever
 from src.rag.diagnosis import DiagnosisEngine
@@ -205,6 +205,11 @@ class RAGPipeline:
             context_extras=context_extras,
         )
 
+        # PRD v3.0：辨证成功 → 前两层模板拼接到回答前
+        if diagnosis_engine and diagnosis.status == "diagnosed":
+            template = build_diagnosis_template(diagnosis.to_dict(), docs)
+            answer = template + "\n\n" + answer
+
         return RAGResponse(
             answer=answer,
             retrieved_docs=docs,
@@ -257,7 +262,7 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
-        # PRD v3.0：辨证成功 → 辨证结论注入上下文（三层生成）
+        # PRD v3.0：辨证成功 → 辨证结论注入上下文
         if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
             if context_extras is None:
                 context_extras = {}
@@ -292,7 +297,20 @@ class RAGPipeline:
             max_tokens=max_tokens,
             context_extras=context_extras,
         )
+
+        # PRD v3.0：辨证成功 → 前两层模板（代码生成）+ 模型第三层讲解
+        if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
+            template = build_diagnosis_template(diagnosis.to_dict(), docs)
+            stream = self._stream_with_template(template, stream)
+
         return docs, stream, route_type, context_extras
+
+    @staticmethod
+    def _stream_with_template(template: str, stream: Iterator[str]) -> Iterator[str]:
+        """在模型流前先输出模板层（辨证前两层，代码生成）"""
+        yield template + "\n\n"
+        for chunk in stream:
+            yield chunk
 
     @property
     def retriever(self):
