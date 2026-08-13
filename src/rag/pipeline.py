@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterator, Optional
 
-from src.rag.generate import Generator, build_diagnosis_template
+from src.rag.generate import Generator, build_diagnosis_full_answer
 from src.rag.retrieve import RetrievalResult, VectorRetriever
 from src.rag.hybrid_retriever import HybridRetriever
 from src.rag.diagnosis import DiagnosisEngine
@@ -163,12 +163,21 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
-        # PRD v3.0：辨证成功 → 辨证结论注入上下文 + 讲稿素材
+        # PRD v3.0：辨证成功 → 三层回答全部由模板生成（锚点理论，不经模型）
         if diagnosis_engine and diagnosis.status == "diagnosed":
             if context_extras is None:
                 context_extras = {}
             context_extras["diagnosis"] = diagnosis.to_dict()
             self._inject_lectures(question, context_extras)
+            answer = build_diagnosis_full_answer(
+                diagnosis.to_dict(), docs, context_extras.get("lectures", []))
+            return RAGResponse(
+                answer=answer,
+                retrieved_docs=docs,
+                latency=round(time.time() - start, 2),
+                route_type="diagnosed",
+                context_extras=context_extras,
+            )
 
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
@@ -206,11 +215,6 @@ class RAGPipeline:
             max_tokens=max_tokens,
             context_extras=context_extras,
         )
-
-        # PRD v3.0：辨证成功 → 前两层模板拼接到回答前
-        if diagnosis_engine and diagnosis.status == "diagnosed":
-            template = build_diagnosis_template(diagnosis.to_dict(), docs)
-            answer = template + "\n\n" + answer
 
         return RAGResponse(
             answer=answer,
@@ -264,12 +268,18 @@ class RAGPipeline:
                 route_type = self._hybrid_retriever.last_route.query_type.value
             context_extras = self._hybrid_retriever.last_context or None
 
-        # PRD v3.0：辨证成功 → 辨证结论注入上下文 + 讲稿素材
+        # PRD v3.0：辨证成功 → 三层回答全部由模板生成（锚点理论，不经模型）
         if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
             if context_extras is None:
                 context_extras = {}
             context_extras["diagnosis"] = diagnosis.to_dict()
             self._inject_lectures(question, context_extras)
+            answer = build_diagnosis_full_answer(
+                diagnosis.to_dict(), docs, context_extras.get("lectures", []))
+
+            def _diag_stream():
+                yield answer
+            return docs, _diag_stream(), "diagnosed", context_extras
 
         # P0-4 护栏 2：检索为空且无有效上下文 → 拒答，不调用模型
         has_effective_context = bool(
@@ -301,19 +311,7 @@ class RAGPipeline:
             context_extras=context_extras,
         )
 
-        # PRD v3.0：辨证成功 → 前两层模板（代码生成）+ 模型第三层讲解
-        if diagnosis_engine and diagnosis and diagnosis.status == "diagnosed":
-            template = build_diagnosis_template(diagnosis.to_dict(), docs)
-            stream = self._stream_with_template(template, stream)
-
         return docs, stream, route_type, context_extras
-
-    @staticmethod
-    def _stream_with_template(template: str, stream: Iterator[str]) -> Iterator[str]:
-        """在模型流前先输出模板层（辨证前两层，代码生成）"""
-        yield template + "\n\n"
-        for chunk in stream:
-            yield chunk
 
     def _inject_lectures(self, question: str, context_extras: dict[str, Any]) -> None:
         """FR4: 检索倪师讲稿素材注入上下文（第三层讲解引用倪师原话）

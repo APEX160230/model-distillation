@@ -46,28 +46,22 @@ class TestPipelineDiagnosis:
         assert len(diag.get("options", [])) >= 2
 
     def test_diagnosed_passes_diagnosis_to_generator(self):
-        """辨证成功 → generator 收到含 diagnosis 的 context_extras（检索空也放行）"""
+        """辨证成功 → 三层回答完全由模板生成，不调用模型"""
         retriever = MagicMock()
         retriever.query.return_value = []
         retriever.last_route = None
         retriever.last_context = {}
         gen = MagicMock()
-        gen.generate.return_value = "三层回答"
+        gen.generate.return_value = "不应被调用"
         pipeline = self._make_pipeline(retriever=retriever, generator=gen)
 
         resp = pipeline.query("头痛怕冷不出汗")
 
-        assert gen.generate.called
-        _args, kwargs = gen.generate.call_args
-        extras = kwargs.get("context_extras") or {}
-        diag = extras.get("diagnosis", {})
-        assert diag.get("status") == "diagnosed"
-        assert diag.get("syndrome") == "太阳伤寒"
-        # 答案 = 前两层模板（代码生成）+ 模型输出
+        # 辨证链路不经过模型（锚点理论：模板+素材直引，严谨性 100%）
+        assert not gen.generate.called
         assert "【辨证方向】" in resp.answer
         assert "【类方思路】" in resp.answer
         assert "麻黄汤类方" in resp.answer
-        assert "三层回答" in resp.answer
 
     def test_rejected_falls_back_to_rag(self):
         """非症状问题（辨证 rejected）→ 降级走现有 RAG 链路"""
@@ -96,22 +90,23 @@ class TestPipelineDiagnosis:
         assert not pipeline._generator.stream_generate.called
 
     def test_diagnosed_stream_starts_with_template(self):
-        """辨证流式：先输出前两层模板（代码生成），再输出模型第三层"""
+        """辨证流式：三层回答完全由模板生成，无模型流"""
         retriever = MagicMock()
         retriever.query.return_value = [_mock_doc()]
         retriever.last_route = None
         retriever.last_context = {}
         gen = MagicMock()
-        gen.stream_generate.return_value = iter(["讲解内容"])
+        gen.stream_generate.return_value = iter(["不应出现"])
         pipeline = self._make_pipeline(retriever=retriever, generator=gen)
 
         docs, stream, route_type, extras = pipeline.stream_query("头痛怕冷不出汗")
 
         full = "".join(stream)
+        assert not gen.stream_generate.called
         assert "【辨证方向】" in full
         assert "【类方思路】" in full
         assert "麻黄汤类方" in full
-        assert "讲解内容" in full
+        assert "不应出现" not in full
 
     def test_diagnosed_injects_lectures(self):
         """辨证成功时检索讲稿素材并注入 context_extras（FR4）"""
@@ -130,6 +125,9 @@ class TestPipelineDiagnosis:
 
         resp = pipeline.query("头痛怕冷不出汗")
 
+        # 讲稿素材直引进第三层
+        assert "【倪师讲解】" in resp.answer
+        assert "太阳伤寒是寒邪束表" in resp.answer
         extras = resp.context_extras or {}
         lectures = extras.get("lectures", [])
         assert len(lectures) == 1
@@ -137,7 +135,7 @@ class TestPipelineDiagnosis:
         assert lecture_retriever.query.called
 
     def test_diagnosed_lecture_failure_silent(self):
-        """讲稿库不可用时静默跳过，不影响主链路"""
+        """讲稿库不可用时静默跳过，用条文素材兜底"""
         retriever = MagicMock()
         retriever.query.return_value = [_mock_doc()]
         retriever.last_route = None
@@ -152,5 +150,6 @@ class TestPipelineDiagnosis:
         resp = pipeline.query("头痛怕冷不出汗")
 
         assert resp.answer  # 主链路不受影响
+        assert "【倪师讲解】" in resp.answer  # 条文素材兜底
         extras = resp.context_extras or {}
         assert "lectures" not in extras or extras["lectures"] == []

@@ -12,6 +12,7 @@ from src.rag.generate import (
     format_context_extras,
     verify_clause_numbers,
     apply_safety_filter,
+    build_lecture_layer,
 )
 
 
@@ -149,6 +150,34 @@ class TestFormatContextExtras:
     def test_lectures_skipped_when_empty(self):
         """空讲稿素材不渲染"""
         assert format_context_extras({"lectures": []}) == ""
+
+    def test_lecture_layer_dose_mentions_cleaned(self):
+        """讲稿素材直引时剂量记载脱敏（避免误认用药建议）"""
+        lectures = [
+            {"book": "伤寒", "topic": "麻黄汤",
+             "text": "麻黄三两，桂枝二两去皮，杏仁七十个，水煎服。"},
+        ]
+        result = build_lecture_layer(lectures)
+        assert "【倪师讲解】" in result
+        assert "麻黄三两" not in result
+        assert "〔剂量从略〕" in result
+
+    def test_lecture_layer_cooking_method_truncated(self):
+        """煎服方法（上四味/以水/煮取）在直引时截断"""
+        lectures = [
+            {"book": "伤寒", "topic": "麻黄汤",
+             "text": "太阳病头痛身疼者，麻黄汤主之。上四味，以水九升，煮取二升半，温服八合。"},
+        ]
+        result = build_lecture_layer(lectures)
+        assert "以水九升" not in result
+        assert "煎服方法从略" in result
+        assert "麻黄汤主之" in result
+
+    def test_lecture_layer_fallback_to_docs(self):
+        """无讲稿素材时回退为条文引用"""
+        result = build_lecture_layer(None, [_make_doc(clause_id=35, text="太阳病，麻黄汤主之")])
+        assert "【第35条】" in result
+        assert "麻黄汤主之" in result
 
     def test_formula_compositions_rendered(self):
         extras = {

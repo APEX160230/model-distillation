@@ -91,6 +91,82 @@ def build_diagnosis_template(diagnosis: dict, docs: list[RetrievalResult] | None
     return "\n\n".join(parts)
 
 
+DIAGNOSIS_DISCLAIMER = (
+    "\n\n若症状持续或加重，请及时就医。"
+    "本内容仅供中医知识学习参考，不构成诊疗建议。"
+)
+
+# 剂量脱敏：讲稿原文中的剂量记载（"麻黄三两""桂枝二两去皮"）不直引给用户，
+# 避免被误认为用药建议。替换为占位标记。
+_DOSE_MENTION_PATTERN = re.compile(
+    r"[0-9０-９一二三四五六七八九十百千万两半]+\s*(克|钱|两|斤|g|G|ml|毫升|片|粒|枚|付|剂|碗|升|合|斗)"
+)
+
+# 煎服信号：素材中出现即截断（"上四味，以水九升……温服八合"属于实操指导，不直引）
+_COOKING_SIGNAL = re.compile(r"上四味|以水|煮取|温服|煎服|去滓|内诸药|为散|杵捣|杵为")
+
+
+def _sanitize_lecture_text(text: str) -> str:
+    """讲稿素材安全化：剂量脱敏 + 煎服方法截断
+
+    讲稿原文常含"麻黄三两""上四味，以水九升，煮取二升半……"等
+    实操指导，直引给用户有被误认为用药建议的风险，统一处理。
+    """
+    text = _DOSE_MENTION_PATTERN.sub("〔剂量从略〕", text)
+    m = _COOKING_SIGNAL.search(text)
+    if m:
+        text = text[: m.start()] + "（煎服方法从略）"
+    return text
+
+
+def build_lecture_layer(
+    lectures: list[dict] | None = None,
+    docs: list[RetrievalResult] | None = None,
+) -> str:
+    """第三层【倪师讲解】：讲稿素材直引（锚点理论，不经模型）
+
+    素材为倪师讲稿原文片段（检索自 lectures collection），原文照抄，
+    不经过模型组织——杜绝 1.5B 自由发挥导致的幻觉。
+    剂量记载脱敏、煎服方法截断（避免被误认为用药建议）。
+    无讲稿素材时回退为条文原文引用。
+    """
+    parts = ["【倪师讲解】"]
+    if lectures:
+        for lec in lectures[:3]:
+            text = _sanitize_lecture_text((lec.get("text", "") or "").strip())[:150]
+            if not text:
+                continue
+            book = lec.get("book", "")
+            prefix = f"（《{book}》节选）" if book else ""
+            parts.append(f"{prefix}{text}")
+    elif docs:
+        parts.append("倪师讲稿库中暂未检索到直接相关的讲解，以下为经典原文参考：")
+        for doc in docs[:3]:
+            cid = getattr(doc, "clause_id", None)
+            head = f"【第{cid}条】" if cid else ""
+            parts.append(f"{head}{doc.text[:120]}")
+    else:
+        parts.append("（暂无相关讲解素材，建议咨询专业中医师。）")
+    return "\n".join(parts)
+
+
+def build_diagnosis_full_answer(
+    diagnosis: dict,
+    docs: list[RetrievalResult] | None = None,
+    lectures: list[dict] | None = None,
+) -> str:
+    """完整三层辨证回答（全部代码生成，不经模型）
+
+    第一层【辨证方向】/第二层【类方思路】来自图谱结论模板，
+    第三层【倪师讲解】为讲稿原文直引。严谨性 100%，无幻觉空间。
+    """
+    layers = [
+        build_diagnosis_template(diagnosis, docs),
+        build_lecture_layer(lectures, docs),
+    ]
+    return "\n\n".join(layers) + DIAGNOSIS_DISCLAIMER
+
+
 def format_context_extras(extras: dict[str, Any] | None) -> str:
     """格式化额外上下文（概念简述、方剂信息、对比数据等）
 
