@@ -21,6 +21,10 @@ from src.data.symptom_mapping import (
 )
 from src.rag.concept_mapper import ConceptMapper
 
+# 软症状（信息量低，不能单独定罪；只作辅助票帮硬症状收敛）
+# 有明确条文依据但表述泛、指向分散的症状属于软症状
+SOFT_SYMPTOMS: frozenset[str] = frozenset({"不寐", "神疲", "咽痛"})
+
 
 @dataclass
 class DiagnosisResult:
@@ -90,8 +94,9 @@ class DiagnosisEngine:
 
     def diagnose_symptoms(self, symptoms: list[str]) -> DiagnosisResult:
         """症状集合 → 投票判定"""
-        # 投票：证型 t 得分 = 命中的症状数
+        # 投票：证型 t 得分 = 命中的症状数（记录票源，供软症状防线使用）
         votes: dict[str, int] = {}
+        vote_sources: dict[str, list[str]] = {}
         evidence: list[str] = []
         for s in symptoms:
             candidates = SYMPTOM_SYNDROME.get(s)
@@ -100,6 +105,7 @@ class DiagnosisEngine:
             evidence.append(s)
             for t in candidates:
                 votes[t] = votes.get(t, 0) + 1
+                vote_sources.setdefault(t, []).append(s)
 
         if not votes:
             return DiagnosisResult(
@@ -113,6 +119,11 @@ class DiagnosisEngine:
         second_score = ranked[1][1] if len(ranked) > 1 else 0
 
         if top_score >= 2 and top_score - second_score >= 1:
+            # 软症状防线：若该证型的所有票都来自软症状（信息量低），
+            # 不得据此判定方向（如"犯困+疲惫"不得判少阴寒化），改为追问
+            sources = vote_sources.get(top_syndrome, [])
+            if sources and all(s in SOFT_SYMPTOMS for s in sources):
+                return self._clarify_result(evidence, [top_syndrome])
             return DiagnosisResult(
                 status="diagnosed",
                 syndrome=top_syndrome,
@@ -121,8 +132,14 @@ class DiagnosisEngine:
                 evidence=evidence,
             )
 
-        # 证据不足或并列 → 关键鉴别追问
-        top_syndromes = [t for t, s in ranked if s == top_score]
+        return self._clarify_result(evidence, [t for t, s in ranked if s == top_score])
+
+    def _clarify_result(
+        self,
+        evidence: list[str],
+        top_syndromes: list[str],
+    ) -> DiagnosisResult:
+        """构造追问结果：优先关键鉴别问题，否则通用追问"""
         question = self._pick_question(top_syndromes)
         if question:
             return DiagnosisResult(
@@ -132,8 +149,6 @@ class DiagnosisEngine:
                 options=list(question["options"]),
                 reason="症状信息不足，需要进一步确认。",
             )
-
-        # 无匹配鉴别问题 → 通用追问（引导补充典型症状），不拒答
         generic = self._generic_question(top_syndromes)
         return DiagnosisResult(
             status="need_clarification",

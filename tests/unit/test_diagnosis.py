@@ -95,6 +95,39 @@ class TestDiagnose:
         assert r.status == "need_clarification"
         assert r.question is not None
 
+    def test_soft_symptom_sleep_alone_asks(self):
+        """软症状（睡不好）单独出现 → 追问而非硬判"""
+        r = self.engine.diagnose("我最近睡不好")
+        assert r.status == "need_clarification"
+        assert r.syndrome is None
+
+    def test_soft_symptom_assists_hard_voting(self):
+        """软症状辅助硬症状收敛（头痛+怕冷+无汗+睡不好 → 仍判太阳伤寒）"""
+        r = self.engine.diagnose("头痛，怕冷，不出汗，还睡不好")
+        assert r.status == "diagnosed"
+        assert r.syndrome == "太阳伤寒"
+
+    def test_soft_combination_no_false_positive(self):
+        """软症状组合（头疼+睡不好）不硬判（无共同证型≥2票）"""
+        r = self.engine.diagnose("有点头疼，有点睡不好")
+        assert r.status != "diagnosed"  # 追问或拒答，绝不硬判
+
+    def test_soft_only_votes_no_diagnosis(self):
+        """全软症状凑票（头痛+疲惫+犯困）不判危重方向 → 追问"""
+        r = self.engine.diagnose("有点头痛上火疲惫犯困")
+        assert r.status != "diagnosed"  # 犯困≠但欲寐，软症状不得单独定罪
+
+    def test_soft_only_votes_no_diagnosis_2(self):
+        """嗓子疼+睡不好（纯软症状）→ 追问而非判少阴热化"""
+        r = self.engine.diagnose("最近嗓子疼，睡不好")
+        assert r.status != "diagnosed"
+
+    def test_hard_symptom_still_dominates_with_soft(self):
+        """硬症状主导 + 软症状辅助 → 正常判定"""
+        r = self.engine.diagnose("头痛怕冷不出汗还睡不好")
+        assert r.status == "diagnosed"
+        assert r.syndrome == "太阳伤寒"
+
     def test_rejected_when_no_syndrome_match(self):
         """图谱外症状 → 低置信拒答"""
         r = self.engine.diagnose("我耳鸣，听力下降")
